@@ -1,0 +1,19 @@
+COMO APLICAR ESTE PATCH NO CRM
+
+1. Extraia seu CRM(4).rar no computador.
+2. Faça backup da pasta extraída.
+3. Substitua a pasta antiga:
+   02_BACKEND_EASYPANEL_NODE
+   pela pasta nova deste pacote:
+   02_BACKEND_EASYPANEL_NODE
+4. Use os arquivos SQL da nova pasta:
+   03_SUPABASE_SQL
+5. Não altere a pasta:
+   01_FRONTEND_PUBLIC_HTML_SEM_ALTERAR_LAYOUT
+6. No frontend, ajuste somente a URL técnica da API, caso necessário:
+   window.R2R_API_BASE = 'https://api.r2rmarketingdigital.com.br'
+7. Suba o backend no EasyPanel.
+8. Rode o SQL no Supabase.
+9. Crie o admin no Supabase Auth.
+10. Execute o seed do admin com o UUID real.
+11. Teste /health, login, dashboard, leads e clientes.

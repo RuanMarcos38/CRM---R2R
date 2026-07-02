@@ -1,0 +1,16 @@
+{
+  "name": "r2r-crm-saas-backend",
+  "version": "2026.07.02",
+  "description": "Backend Enterprise corrigido para R2R CRM SaaS multiempresa com Supabase",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js",
+    "test": "node ../tests/run-tests.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
