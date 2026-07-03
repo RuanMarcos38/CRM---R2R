@@ -23,7 +23,7 @@ const { integrationStatus, openAIChat, normalizeEvolutionConfig, evolutionReques
 
 loadEnv();
 
-const VERSION = '2026.06.29-saas';
+const VERSION = '2026.07.03-easypanel-node';
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = resolvePublicDir();
@@ -56,6 +56,10 @@ function healthPayload(req) {
     time: new Date().toISOString(),
     storage: store.kind,
     public_dir: PUBLIC_DIR,
+    entrypoint: 'repo-root-node',
+    node: process.version,
+    host: HOST,
+    port: PORT,
     api_base: publicConfig(req).api_base,
     integrations: integrationStatus(),
     supabase: {
@@ -75,12 +79,12 @@ async function readJsonResponse(response) {
 }
 
 function resolvePublicDir() {
+  const defaultPublicDir = path.join(__dirname, '..', 'frontend-public_html');
   const candidates = [
     process.env.PUBLIC_DIR,
     path.join(__dirname, 'frontend'),
     path.join(__dirname, '..', 'frontend'),
-    path.join(__dirname, '..', 'frontend-public_html'),
-    __dirname
+    defaultPublicDir
   ].filter(Boolean);
 
   for (const dir of candidates) {
@@ -88,7 +92,7 @@ function resolvePublicDir() {
       if (fs.existsSync(path.join(dir, 'index.html'))) return path.resolve(dir);
     } catch (_) {}
   }
-  return path.resolve(__dirname);
+  return path.resolve(defaultPublicDir);
 }
 
 async function handleLogin(req, res) {

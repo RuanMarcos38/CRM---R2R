@@ -1,6 +1,8 @@
 .git
+.tools
 node_modules
 backend-node/node_modules
+.env
 .data
 backend-node/.data
 *.zip

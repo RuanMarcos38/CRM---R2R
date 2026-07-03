@@ -1,6 +1,6 @@
 {
   "name": "r2r-crm-saas",
-  "version": "2026.07.02",
+  "version": "2026.07.03",
   "description": "R2R CRM SaaS - entrada de compatibilidade para deploy pela raiz",
   "main": "server.js",
   "scripts": {
