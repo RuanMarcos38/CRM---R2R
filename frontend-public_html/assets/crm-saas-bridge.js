@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.R2R_BRIDGE_VERSION = '20260703-wa-qr-fix';
+  window.R2R_BRIDGE_VERSION = '20260703-wa-config-hardfix';
   console.log('[R2R] Backend bridge version', window.R2R_BRIDGE_VERSION);
 
   var TABLE_ENDPOINTS = {
@@ -503,6 +503,16 @@
     el.style.opacity = '1';
   }
 
+  function firstDirectGrid(panel) {
+    if (!panel || !panel.children) return null;
+    for (var i = 0; i < panel.children.length; i += 1) {
+      var child = panel.children[i];
+      if (child.classList && child.classList.contains('r2r-wa-evo-grid')) return child;
+      if (child.style && String(child.style.gridTemplateColumns || '').trim()) return child;
+    }
+    return panel.querySelector('.r2r-wa-evo-grid') || panel.querySelector('[style*="grid-template-columns"]');
+  }
+
   function buildEvolutionConfigPanel() {
     var panel = document.createElement('div');
     panel.id = 'waEvoConfigBloco';
@@ -526,15 +536,15 @@
     var panel = byId('wa-panel-evo');
     if (!panel) return false;
 
-    var grid = panel.querySelector('[style*="grid-template-columns"]') || panel.querySelector('.r2r-wa-evo-grid');
+    var grid = firstDirectGrid(panel);
     var urlEl = byId('waEvoUrl') || byId('waEvoUrl2');
-    var configPanel = byId('waEvoConfigBloco') || (urlEl && nearestPanelChild(urlEl, panel, grid));
+    var configPanel = (urlEl && nearestPanelChild(urlEl, panel, grid)) || byId('waEvoConfigBloco');
+    var qrBox = byId('waQrBox');
+    var qrColumn = qrBox && nearestPanelChild(qrBox, panel, grid);
 
     if (!grid) {
       grid = document.createElement('div');
       grid.className = 'r2r-wa-evo-grid';
-      var qrBox = byId('waQrBox');
-      var qrColumn = qrBox && nearestPanelChild(qrBox, panel, null);
       if (qrColumn) grid.appendChild(qrColumn);
       panel.appendChild(grid);
     }
@@ -555,8 +565,31 @@
       grid.appendChild(configPanel);
     }
 
+    if (qrColumn && qrColumn.parentNode !== grid) {
+      grid.insertBefore(qrColumn, grid.firstChild || null);
+    }
+    if (configPanel.parentNode !== grid) {
+      grid.appendChild(configPanel);
+    }
+
     configPanel.id = 'waEvoConfigBloco';
+    if (configPanel.classList) configPanel.classList.add('r2r-wa-config-column');
     makeVisible(configPanel, 'block');
+    configPanel.style.gridColumn = '2';
+    configPanel.style.minWidth = '280px';
+    if (qrColumn) qrColumn.style.gridColumn = '1';
+
+    var node = configPanel.parentNode;
+    while (node && node !== panel.parentNode) {
+      if (node.style) {
+        node.hidden = false;
+        node.style.visibility = 'visible';
+        node.style.opacity = '1';
+        if (node !== panel && node.style.display === 'none') node.style.display = '';
+      }
+      if (node === panel) break;
+      node = node.parentNode;
+    }
 
     var hint = byId('waEvoConfigHint');
     if (!hint && configPanel.firstElementChild) {

@@ -1265,7 +1265,7 @@ tbody td{padding:12px 14px;font-size:.84rem}
                   </div>
 
                   <!-- CONFIG EVOLUTION API -->
-                  <div>
+                  <div id="waEvoConfigBloco" class="r2r-wa-config-column">
                     <div style="font-size:.82rem;font-weight:700;color:var(--text1);margin-bottom:10px">Configurar Evolution API</div>
                     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:11px;font-size:.75rem;color:var(--gray2);line-height:1.8;margin-bottom:12px">
                       <strong style="color:var(--text2)">Instalar Evolution API (gratuito):</strong><br>
@@ -6892,7 +6892,7 @@ console.log('[R2R CRM] Patch v12 ✅');
 </script>
 
 <script>
-// R2R — PATCH: Oculta config WA para nao-admins, auto-check status
+// R2R — PATCH: Mantem config WA visivel e auto-check status
 (function(){
   var EVO_URL  = '';
   var EVO_KEY  = '';
@@ -6904,38 +6904,41 @@ console.log('[R2R CRM] Patch v12 ✅');
   if(!cfg.url){ cfg = {url:EVO_URL, key:EVO_KEY, inst:EVO_INST}; localStorage.setItem('r2r_wa_cfg', JSON.stringify(cfg)); }
   window.WA_CFG = cfg;
 
-  function isAdmin(){
-    var u = window.CURR || {};
-    return u.tipo_usuario==='super_admin' || u.tipo_usuario==='administrador' || u.funcao==='administrador';
-  }
-
   function preencherCampos(){
-    ['waEvoUrl','waEvoUrl2'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=EVO_URL; });
-    ['waEvoKey','waEvoKey2'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=EVO_KEY; });
-    ['waEvoInst','waEvoInst2','waEvoInstance'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=EVO_INST; });
+    var saved = window.WA_CFG || {};
+    var url = saved.url || EVO_URL;
+    var key = saved.key || EVO_KEY;
+    var inst = saved.inst || saved.instance || EVO_INST || 'r2r-crm';
+    ['waEvoUrl','waEvoUrl2'].forEach(function(id){ var e=document.getElementById(id); if(e && url) e.value=url; });
+    ['waEvoKey','waEvoKey2'].forEach(function(id){ var e=document.getElementById(id); if(e && key) e.value=key; });
+    ['waEvoInst','waEvoInst2','waEvoInstance'].forEach(function(id){ var e=document.getElementById(id); if(e && (!e.value || e.value==='r2r-crm')) e.value=inst; });
   }
 
   function aplicarVisibilidadeAdmin(){
-    // Bloco de configuração técnica (URL, Key, Instância, instruções de instalação)
+    // A configuracao da Evolution precisa ficar visivel nesta tela de Ajustes.
     var configBloco = document.getElementById('waEvoConfigBloco');
     if(!configBloco){
-      // Cria um wrapper em torno dos campos técnicos se ainda não existir
       var evoPanel = document.getElementById('wa-panel-evo');
       if(!evoPanel) return;
-      var configDiv = evoPanel.querySelector('div > div:last-child'); // coluna de config
+      var configDiv = evoPanel.querySelector('[style*="grid-template-columns"] > div:nth-child(2)');
       if(configDiv) configDiv.id = 'waEvoConfigBloco';
       configBloco = document.getElementById('waEvoConfigBloco');
     }
     if(configBloco){
-      configBloco.style.display = isAdmin() ? '' : 'none';
+      configBloco.style.display = 'block';
+      configBloco.style.visibility = 'visible';
+      configBloco.hidden = false;
     }
 
-    // Esconde toda a coluna de config para não-admins
     var grid = document.querySelector('#wa-panel-evo .grid-cols-2, #wa-panel-evo [style*="grid-template-columns"]');
-    if(grid && !isAdmin()){
-      // Só mostra o QR, esconde a coluna de config
+    if(grid){
+      grid.style.display = 'grid';
       var cols = grid.children;
-      if(cols && cols.length >= 2) cols[1].style.display = 'none';
+      if(cols && cols.length >= 2){
+        cols[1].style.display = 'block';
+        cols[1].style.visibility = 'visible';
+        cols[1].hidden = false;
+      }
     }
   }
 
@@ -7321,6 +7324,6 @@ console.log('[R2R CRM] Patch v12 ✅');
 })();
 </script>
 
-<script src="assets/crm-saas-bridge.js?v=20260703-wa-qr-fix"></script>
+<script src="assets/crm-saas-bridge.js?v=20260703-wa-config-hardfix"></script>
 </body>
 </html>
