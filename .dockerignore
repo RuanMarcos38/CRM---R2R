@@ -1,5 +1,8 @@
+.git
 node_modules
-npm-debug.log
-.env
-.DS_Store
-coverage
+backend-node/node_modules
+.data
+backend-node/.data
+*.zip
+work
+outputs

@@ -1,81 +1,171 @@
-#!/usr/bin/env node
-'use strict';
-
-const { spawn } = require('child_process');
-const path = require('path');
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
-const root = path.resolve(__dirname, '..', '02_BACKEND_EASYPANEL_NODE');
-const port = 3199;
-const serverPath = path.join(root, 'server.js');
+process.env.NODE_ENV = 'test';
+process.env.PORT = '0';
+process.env.ALLOW_DEMO_AUTH = 'true';
+process.env.DEMO_USER_EMAIL = 'admin@demo.local';
+process.env.RATE_LIMIT_MAX = '0';
+process.env.DATA_DIR = path.join(__dirname, '.tmp-data');
 
-function delay(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
-async function request(pathname, options = {}) {
-  const res = await fetch(`http://127.0.0.1:${port}${pathname}`, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-token', ...(options.headers || {}) },
-    body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body,
-  });
-  const text = await res.text();
-  let data = text;
-  try { data = text ? JSON.parse(text) : {}; } catch {}
-  return { status: res.status, data };
+fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+
+const { normalizePlanId } = require('../src/billing');
+const { resourceForPath } = require('../src/resources');
+const { sanitizePayload, stripSensitiveFields } = require('../src/security');
+const { applyFilters, seedLocalData } = require('../src/store');
+const { createServer } = require('../server');
+
+const tests = [];
+
+function test(name, fn) {
+  tests.push({ name, fn });
 }
 
-(async () => {
-  const child = spawn(process.execPath, [serverPath], {
-    cwd: root,
-    env: { ...process.env, PORT: String(port), NODE_ENV: 'test', R2R_TEST_MODE: '1', CORS_ORIGIN: '*' },
-    stdio: ['ignore', 'pipe', 'pipe']
+async function request(base, method, pathname, body, token) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = 'Bearer ' + token;
+  const res = await fetch(base + pathname, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body)
   });
-  let logs = '';
-  child.stdout.on('data', d => logs += d.toString());
-  child.stderr.on('data', d => logs += d.toString());
+  const text = await res.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+  return { res, data };
+}
+
+test('normaliza planos comerciais', () => {
+  assert.strictEqual(normalizePlanId('Starter'), 'starter');
+  assert.strictEqual(normalizePlanId('negocios'), 'business');
+  assert.strictEqual(normalizePlanId('enterprise'), 'premium');
+  assert.strictEqual(normalizePlanId('desconhecido'), null);
+});
+
+test('resolve recursos REST oficiais e aliases', () => {
+  assert.strictEqual(resourceForPath('/api/leads').table, 'leads');
+  assert.strictEqual(resourceForPath('/api/contacts').table, 'clientes');
+  assert.strictEqual(resourceForPath('/api/messages').table, 'mensagens');
+  assert.strictEqual(resourceForPath('/api/integrations').table, 'integracoes');
+  assert.strictEqual(resourceForPath('/api/funil-etapas').table, 'funil_etapas');
+  assert.strictEqual(resourceForPath('/api/leads/abc').id, 'abc');
+  assert.strictEqual(resourceForPath('/api/nao-existe'), null);
+});
+
+test('remove campos sensiveis de payloads', () => {
+  const payload = sanitizePayload({
+    id: 'nao',
+    nome: ' Lead ',
+    token: 'abc',
+    config: { api_key: 'segredo', visivel: true }
+  });
+  assert.strictEqual(payload.id, undefined);
+  assert.strictEqual(payload.nome, 'Lead');
+  assert.strictEqual(payload.token, '[redacted]');
+  assert.strictEqual(payload.config.api_key, '[redacted]');
+  assert.strictEqual(payload.config.visivel, true);
+});
+
+test('mascara segredos em listas e permite endpoint especial salvar segredo', () => {
+  const masked = stripSensitiveFields([{ config: { apiKey: 'abc', url: 'https://evo.local' } }]);
+  assert.strictEqual(masked[0].config.apiKey, '[redacted]');
+  assert.strictEqual(masked[0].config.url, 'https://evo.local');
+
+  const payload = sanitizePayload(
+    { config: { apiKey: 'abc', url: 'https://evo.local' } },
+    { allowSensitive: true }
+  );
+  assert.strictEqual(payload.config.apiKey, 'abc');
+});
+
+test('filtra dados locais por busca e ordenacao', () => {
+  const seed = seedLocalData();
+  const rows = applyFilters(seed.leads, { search: 'demo', order: 'score.desc' }, { search: ['nome', 'email'], defaultOrder: 'created_at.desc' });
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].nome, 'Lead Demo');
+});
+
+test('migration contem tabelas minimas, RLS e indices', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', '..', 'supabase', 'migrations', '001_schema.sql'), 'utf8');
+  [
+    'empresas', 'usuarios', 'planos', 'assinaturas', 'leads', 'clientes',
+    'oportunidades', 'funis', 'funil_etapas', 'atividades', 'tarefas',
+    'conversas', 'mensagens', 'campanhas', 'fontes_lead', 'integracoes',
+    'automacoes', 'automacao_regras', 'arquivos', 'tags', 'lead_tags',
+    'notificacoes', 'webhooks_logs', 'billing_webhooks', 'audit_logs',
+    'api_keys', 'permissoes'
+  ].forEach(table => {
+    assert.ok(sql.includes('public.' + table), 'missing table ' + table);
+  });
+  assert.ok(sql.includes('enable row level security'));
+  assert.ok(sql.includes('app_private.has_empresa_access'));
+  assert.ok(sql.includes('public.dashboard_resumo'));
+  assert.ok(sql.includes('security_invoker'));
+  assert.ok(sql.includes('idx_leads_empresa_created'));
+  assert.ok(sql.includes('idx_integracoes_empresa_tipo'));
+});
+
+test('servidor responde health, login, rotas protegidas e Evolution sem config', async () => {
+  const server = createServer();
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = 'http://127.0.0.1:' + server.address().port;
 
   try {
-    await delay(800);
-    let r = await request('/health');
-    assert.equal(r.status, 200, 'health deve responder 200');
-    assert.equal(r.data.success, true, 'health deve responder success=true');
+    let out = await request(base, 'GET', '/health');
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.status, 'online');
 
-    r = await request('/api/auth/login', { method: 'POST', body: { email: 'admin@r2rmarketingdigital.com.br', password: 'teste' } });
-    assert.equal(r.status, 200, 'login teste deve responder 200');
-    assert.ok(r.data.data.access_token, 'login deve retornar access_token');
+    out = await request(base, 'GET', '/api/health');
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.success, true);
 
-    r = await request('/api/auth/me');
-    assert.equal(r.status, 200, 'me deve responder 200');
-    assert.equal(r.data.data.company.name, 'R2R Test Company');
+    out = await request(base, 'POST', '/api/auth/login', { email: 'admin@demo.local', password: 'demo' });
+    assert.strictEqual(out.res.status, 200);
+    assert.ok(out.data.access_token);
+    const token = out.data.access_token;
 
-    r = await request('/api/leads', { method: 'POST', body: { name: 'Lead Teste', phone: '5547999999999', source: 'teste' } });
-    assert.equal(r.status, 201, 'criar lead deve responder 201');
-    const leadId = r.data.data.id;
-    assert.ok(leadId, 'lead criado deve ter id');
+    out = await request(base, 'GET', '/api/me', undefined, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.profile.email, 'admin@demo.local');
 
-    r = await request('/api/leads');
-    assert.equal(r.status, 200, 'listar leads deve responder 200');
-    assert.equal(r.data.data.length, 1, 'deve ter um lead');
+    out = await request(base, 'GET', '/api/leads', undefined, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.ok(Array.isArray(out.data.data));
 
-    r = await request(`/api/leads/${leadId}`, { method: 'PATCH', body: { status: 'qualified' } });
-    assert.equal(r.status, 200, 'atualizar lead deve responder 200');
-    assert.equal(r.data.data.status, 'qualified');
+    out = await request(base, 'GET', '/api/contacts', undefined, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.ok(Array.isArray(out.data.data));
 
-    r = await request(`/api/leads/${leadId}/convert`, { method: 'POST', body: {} });
-    assert.equal(r.status, 200, 'converter lead deve responder 200');
-    assert.ok(r.data.data.client.id, 'cliente convertido deve ter id');
+    out = await request(base, 'GET', '/api/reports/dashboard', undefined, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.success, true);
 
-    r = await request('/api/dashboard/summary');
-    assert.equal(r.status, 200, 'dashboard deve responder 200');
-    assert.ok(Number.isFinite(r.data.data.total_leads), 'dashboard deve ter total_leads');
+    out = await request(base, 'GET', '/api/integrations/evolution/status', undefined, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.configured, false);
+    assert.strictEqual(out.data.status, 'not_configured');
 
-    r = await request('/api/webhooks/n8n/leads?token=test', { method: 'POST', body: { name: 'Webhook Lead', phone: '5547000000000' }, headers: { 'x-webhook-token': 'test' } });
-    assert.equal(r.status, 200, 'webhook em test env deve responder 200');
-
-    console.log('✅ Todos os testes locais passaram.');
-  } catch (err) {
-    console.error('❌ Teste falhou:', err.message);
-    console.error(logs);
-    process.exitCode = 1;
+    out = await request(base, 'POST', '/api/messages/send', { number: '5547999990000', text: 'Ola' }, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.configured, false);
   } finally {
-    child.kill('SIGTERM');
+    await new Promise(resolve => server.close(resolve));
   }
+});
+
+(async () => {
+  for (const item of tests) {
+    try {
+      await item.fn();
+      console.log('OK ' + item.name);
+    } catch (error) {
+      console.error('FAIL ' + item.name);
+      console.error(error.stack || error.message);
+      process.exitCode = 1;
+    }
+  }
+  fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+  if (process.exitCode) process.exit(process.exitCode);
 })();
