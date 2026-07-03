@@ -11,5 +11,7 @@
   "engines": {
     "node": "20.x"
   },
-  "dependencies": {}
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  }
 }

@@ -1,4 +1,48 @@
+const QRCode = require('qrcode');
 const { cleanUrl } = require('./http');
+
+function normalizeInstanceName(value) {
+  const normalized = String(value || 'r2r-crm')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return normalized || 'r2r-crm';
+}
+
+function statusIsConnected(status) {
+  return ['open', 'connected'].includes(String(status || '').toLowerCase());
+}
+
+function possibleInstanceNames(item = {}) {
+  return [
+    item.name,
+    item.instanceName,
+    item.id,
+    item.instance && item.instance.instanceName,
+    item.instance && item.instance.name,
+    item.instance && item.instance.id
+  ].filter(Boolean).map(value => String(value).toLowerCase());
+}
+
+function connectionStatus(item = {}) {
+  return item.connectionStatus ||
+    item.status ||
+    item.state ||
+    item.instance && (item.instance.connectionStatus || item.instance.status || item.instance.state) ||
+    'not_found';
+}
+
+function instanceList(data) {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.data)) return data.data;
+  if (data && Array.isArray(data.response)) return data.response;
+  if (data && Array.isArray(data.instances)) return data.instances;
+  return [];
+}
 
 function integrationStatus() {
   return {
@@ -8,7 +52,7 @@ function integrationStatus() {
     },
     evolution: {
       configured: !!((process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL) && process.env.EVOLUTION_API_KEY),
-      instance: process.env.EVOLUTION_INSTANCE || 'r2r-crm'
+      instance: normalizeInstanceName(process.env.EVOLUTION_INSTANCE || 'r2r-crm')
     },
     meta: {
       configured: !!process.env.META_ACCESS_TOKEN,
@@ -45,12 +89,15 @@ function extractQr(value, seen = new Set()) {
   if (typeof value !== 'object' || seen.has(value)) return null;
   seen.add(value);
 
-  const priority = ['base64', 'qrcode', 'qrCode', 'qr', 'image'];
+  const priority = ['base64', 'base64Image', 'qrcode', 'qrCode', 'qr', 'image'];
   for (const key of priority) {
     if (Object.prototype.hasOwnProperty.call(value, key)) {
       const found = extractQr(value[key], seen);
       if (found) return found;
-      if (typeof value[key] === 'string' && key.toLowerCase().includes('qr')) return value[key].trim() || null;
+      if (typeof value[key] === 'string' && key.toLowerCase().includes('qr')) {
+        const text = value[key].trim();
+        if (text.startsWith('data:image/') || /^(iVBOR|\/9j\/|R0lGOD|PHN2Z)/.test(text)) return text;
+      }
     }
   }
 
@@ -65,6 +112,36 @@ function extractQr(value, seen = new Set()) {
   for (const item of Object.values(value)) {
     const found = extractQr(item, seen);
     if (found) return found;
+  }
+  return null;
+}
+
+function looksLikeQrPayload(value) {
+  const text = String(value || '').trim();
+  if (text.length < 32) return false;
+  if (text.startsWith('data:image/')) return false;
+  if (/^(iVBOR|\/9j\/|R0lGOD|PHN2Z)/.test(text)) return false;
+  if (/^https?:\/\//i.test(text)) return false;
+  return true;
+}
+
+function extractQrPayload(value, seen = new Set()) {
+  if (!value) return null;
+  if (typeof value === 'string') return looksLikeQrPayload(value) ? value.trim() : null;
+  if (typeof value !== 'object' || seen.has(value)) return null;
+  seen.add(value);
+
+  for (const [key, item] of Object.entries(value)) {
+    const normalized = key.toLowerCase().replace(/[_-]/g, '');
+    if (['code', 'qrcode', 'qrcodestring', 'qrstring', 'qrtext'].includes(normalized) && typeof item === 'string') {
+      const payload = extractQrPayload(item, seen);
+      if (payload) return payload;
+    }
+  }
+
+  for (const item of Object.values(value)) {
+    const payload = extractQrPayload(item, seen);
+    if (payload) return payload;
   }
   return null;
 }
@@ -85,11 +162,20 @@ function extractPairingCode(value, seen = new Set()) {
   return null;
 }
 
-function normalizeQrDataUrl(value) {
+async function normalizeQrDataUrl(value) {
   const qr = extractQr(value);
-  if (!qr) return null;
-  if (String(qr).startsWith('data:image/')) return qr;
-  return `data:image/png;base64,${qr}`;
+  if (qr) {
+    if (String(qr).startsWith('data:image/')) return qr;
+    return `data:image/png;base64,${qr}`;
+  }
+
+  const payload = extractQrPayload(value);
+  if (!payload) return null;
+  return QRCode.toDataURL(payload, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 260
+  });
 }
 
 async function evolutionHttp(cfg, pathname, method = 'GET', body) {
@@ -144,7 +230,7 @@ function evolutionConfig() {
   return {
     url: cleanUrl(process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || ''),
     key: process.env.EVOLUTION_API_KEY || '',
-    instance: process.env.EVOLUTION_INSTANCE || 'r2r-crm'
+    instance: normalizeInstanceName(process.env.EVOLUTION_INSTANCE || 'r2r-crm')
   };
 }
 
@@ -152,7 +238,7 @@ function normalizeEvolutionConfig(config = {}) {
   return {
     url: cleanUrl(config.url || config.evolution_url || ''),
     key: config.key || config.apiKey || config.api_key || config.apikey || '',
-    instance: config.instance || config.inst || config.instanceName || 'r2r-crm'
+    instance: normalizeInstanceName(config.instance || config.inst || config.instanceName || 'r2r-crm')
   };
 }
 
@@ -179,19 +265,17 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
     const response = await fetch(cfg.url + pathname, { headers: { apikey: cfg.key } });
     const data = await readJsonResponse(response);
     if (!response.ok) return { ok: false, configured: true, status: 'error', error: data.message || `HTTP ${response.status}` };
-    const list = Array.isArray(data) ? data : [];
+    const list = instanceList(data);
+    const wanted = String(cfg.instance).toLowerCase();
     const found = list.find(item =>
-      item.name === cfg.instance ||
-      item.instanceName === cfg.instance ||
-      item.id === cfg.instance ||
-      (item.instance && item.instance.instanceName === cfg.instance)
+      possibleInstanceNames(item).includes(wanted)
     );
-    const status = found && (found.connectionStatus || found.status || found.state || (found.instance && found.instance.state)) || 'not_found';
-    return { ok: true, success: true, configured: true, connected: status === 'open', status, instance: cfg.instance, data: found || null };
+    const status = found ? connectionStatus(found) : 'not_found';
+    return { ok: true, success: true, configured: true, connected: statusIsConnected(status), status, instance: cfg.instance, data: found || null };
   }
 
   if (pathname === '/instance/connect' && method === 'POST') {
-    const instance = (body && body.instance) || cfg.instance;
+    const instance = normalizeInstanceName((body && body.instance) || cfg.instance);
     const createPayload = { instanceName: instance, qrcode: true, integration: 'WHATSAPP-BAILEYS' };
     const attempts = [];
 
@@ -209,7 +293,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
     ];
 
     for (const attempt of attempts) {
-      const qr = normalizeQrDataUrl(attempt.data);
+      const qr = await normalizeQrDataUrl(attempt.data);
       if (attempt.response && attempt.response.ok && qr) {
         return { ok: true, success: true, configured: true, status: 'qrcode', instance, qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(attempt.data), route: attempt.route, raw: attempt.data, data: attempt.data };
       }
@@ -218,7 +302,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
     for (const item of connectPaths) {
       try {
         const out = await evolutionHttp(cfg, item.route, item.method, { instanceName: instance, instance });
-        const qr = normalizeQrDataUrl(out.data);
+        const qr = await normalizeQrDataUrl(out.data);
         const pairingCode = extractPairingCode(out.data);
         attempts.push({ route: item.route, method: item.method, status: out.response.status, ok: out.response.ok, data: out.data });
         if (out.response.ok && qr) {
@@ -254,7 +338,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
 
   const { response, data } = await evolutionHttp(cfg, path, method, body);
   if (!response.ok) return { ok: false, success: false, configured: true, status: 'error', error: data.message || data.error || `HTTP ${response.status}`, raw: data };
-  const qr = normalizeQrDataUrl(data);
+  const qr = await normalizeQrDataUrl(data);
   return { ok: true, success: true, configured: true, status: qr ? 'qrcode' : 'ok', qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(data), raw: data, data };
 }
 
@@ -268,4 +352,4 @@ async function metaRequest(pathname) {
   return { ok: true, configured: true, data: data.data || data };
 }
 
-module.exports = { integrationStatus, openAIChat, evolutionConfig, normalizeEvolutionConfig, evolutionRequest, metaRequest };
+module.exports = { integrationStatus, openAIChat, evolutionConfig, normalizeEvolutionConfig, normalizeInstanceName, evolutionRequest, metaRequest };

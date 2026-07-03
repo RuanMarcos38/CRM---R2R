@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.R2R_BRIDGE_VERSION = '20260703-wa-config-visible';
+  window.R2R_BRIDGE_VERSION = '20260703-wa-qr-fix';
   console.log('[R2R] Backend bridge version', window.R2R_BRIDGE_VERSION);
 
   var TABLE_ENDPOINTS = {
@@ -85,6 +85,18 @@
 
   function cleanUrl(value) {
     return String(value || '').trim().replace(/\/+$/, '');
+  }
+
+  function normalizeInstanceName(value) {
+    var normalized = String(value || 'r2r-crm')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64);
+    return normalized || 'r2r-crm';
   }
 
   function currentOrigin() {
@@ -371,10 +383,12 @@
     var urlEl = byId('waEvoUrl') || byId('waEvoUrl2');
     var keyEl = byId('waEvoKey') || byId('waEvoKey2');
     var instEl = byId('waEvoInst') || byId('waEvoInstance') || byId('waEvoInst2');
+    var instance = normalizeInstanceName(instEl && instEl.value || window.WA_CFG && (window.WA_CFG.inst || window.WA_CFG.instance) || 'r2r-crm');
+    if (instEl && instEl.value !== instance) instEl.value = instance;
     return {
       url: cleanUrl(urlEl && urlEl.value || window.WA_CFG && window.WA_CFG.url || ''),
       apiKey: String(keyEl && keyEl.value || '').trim(),
-      instance: String(instEl && instEl.value || window.WA_CFG && (window.WA_CFG.inst || window.WA_CFG.instance) || 'r2r-crm').trim() || 'r2r-crm'
+      instance: instance
     };
   }
 
@@ -387,7 +401,7 @@
     });
     ['waEvoInst', 'waEvoInstance', 'waEvoInst2'].forEach(function (id) {
       var el = byId(id);
-      if (el) el.value = config.instance || config.inst || 'r2r-crm';
+      if (el) el.value = normalizeInstanceName(config.instance || config.inst || 'r2r-crm');
     });
     ['waEvoKey', 'waEvoKey2'].forEach(function (id) {
       var el = byId(id);
@@ -396,7 +410,7 @@
         el.placeholder = config.has_api_key ? 'API Key salva no backend - preencha apenas para trocar' : 'Chave global da Evolution API';
       }
     });
-    window.WA_CFG = { url: config.url || '', inst: config.instance || config.inst || 'r2r-crm', key: '' };
+    window.WA_CFG = { url: config.url || '', inst: normalizeInstanceName(config.instance || config.inst || 'r2r-crm'), key: '' };
     try { localStorage.setItem('r2r_wa_cfg', JSON.stringify(window.WA_CFG)); } catch (e) {}
   }
 
@@ -562,7 +576,7 @@
       var el = byId(id);
       if (!el) return;
       makeVisible(el, '');
-      if (id === 'waEvoInst' && !el.value) el.value = 'r2r-crm';
+      if (id === 'waEvoInst') el.value = normalizeInstanceName(el.value || 'r2r-crm');
       if (!el.placeholder) el.placeholder = defaults[id];
       el.autocomplete = id === 'waEvoKey' ? 'off' : 'on';
     });
@@ -706,8 +720,9 @@
       setQrBusy('Gerando QR Code...');
       var saved = await saveWAConfigIfNeeded(true);
       if (!saved) return;
-      var data = await apiFetch('/api/whatsapp/connect', { method: 'POST', body: JSON.stringify({}) });
-      var qr = data.qr || data.qrcode || data.base64 || data.data;
+      var cfg = readWAConfigFromForm();
+      var data = await apiFetch('/api/whatsapp/connect', { method: 'POST', body: JSON.stringify({ instance: cfg.instance }) });
+      var qr = data.qr || data.qrcode || data.qrCode || data.base64 || data.data;
       if (!data.configured) {
         setQrMessage(data.message || 'WhatsApp nao configurado no backend.', 'error');
         toast(data.message || 'WhatsApp nao configurado.', 'warn');

@@ -19,7 +19,7 @@ const { resolveAuthContext, requireAuth, verifyApiKey, createLocalSessionToken, 
 const { RESOURCES, resourceForPath } = require('./src/resources');
 const { buildReportsSummary } = require('./src/reports');
 const { normalizePlanId, publicBillingPlans, checkoutUrlForPlan, whatsappCheckoutFallback, saveBillingWebhookLog } = require('./src/billing');
-const { integrationStatus, openAIChat, normalizeEvolutionConfig, evolutionRequest, metaRequest } = require('./src/integrations');
+const { integrationStatus, openAIChat, normalizeEvolutionConfig, normalizeInstanceName, evolutionRequest, metaRequest } = require('./src/integrations');
 
 loadEnv();
 
@@ -249,7 +249,7 @@ async function saveWhatsappConfig(ctx, body) {
   const currentConfig = current && current.config && typeof current.config === 'object' ? current.config : {};
   const url = cleanUrl(body.url || body.evolution_url || currentConfig.url || '');
   const key = String(body.apiKey || body.api_key || body.apikey || body.key || currentConfig.apiKey || currentConfig.api_key || currentConfig.key || '').trim();
-  const instance = String(body.instance || body.inst || currentConfig.instance || currentConfig.inst || 'r2r-crm').trim() || 'r2r-crm';
+  const instance = normalizeInstanceName(body.instance || body.inst || currentConfig.instance || currentConfig.inst || 'r2r-crm');
 
   if (!url) {
     const error = new Error('Informe a URL da Evolution API.');
