@@ -1,7 +1,10 @@
 FROM node:20-alpine
 WORKDIR /app
-COPY backend-node/package*.json ./backend-node/
-RUN cd backend-node && npm install --omit=dev
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOST=0.0.0.0
+COPY package*.json ./
+RUN npm install --omit=dev
 COPY . .
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["npm", "start"]

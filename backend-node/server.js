@@ -13,9 +13,9 @@ const { URL } = require('url');
 
 const { loadEnv, boolEnv, listEnv } = require('./src/env');
 const { readBody, sendJson, sendText, serveFile, cleanUrl } = require('./src/http');
-const { corsHeaders, checkRateLimit, securityHeaders, stripSensitiveFields } = require('./src/security');
+const { corsHeaders, checkRateLimit, securityHeaders, stripSensitiveFields, sha256 } = require('./src/security');
 const { createStore } = require('./src/store');
-const { resolveAuthContext, requireAuth, verifyApiKey } = require('./src/auth');
+const { resolveAuthContext, requireAuth, verifyApiKey, createLocalSessionToken, localSessionTtlSeconds, localAdminProfile } = require('./src/auth');
 const { RESOURCES, resourceForPath } = require('./src/resources');
 const { buildReportsSummary } = require('./src/reports');
 const { normalizePlanId, publicBillingPlans, checkoutUrlForPlan, whatsappCheckoutFallback, saveBillingWebhookLog } = require('./src/billing');
@@ -25,11 +25,24 @@ loadEnv();
 
 const VERSION = '2026.06.29-saas';
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
 
 function demoAuthEnabled() {
   return boolEnv('ALLOW_DEMO_AUTH', store.kind === 'local' && process.env.NODE_ENV !== 'production');
+}
+
+function configuredAdminEmail() {
+  return String(process.env.R2R_ADMIN_EMAIL || '').trim().toLowerCase();
+}
+
+function adminPasswordMatches(password) {
+  const plain = String(process.env.R2R_ADMIN_PASSWORD || '');
+  const digest = String(process.env.R2R_ADMIN_PASSWORD_SHA256 || '').trim().toLowerCase();
+  if (!plain && !digest) return false;
+  if (plain && password === plain) return true;
+  return !!(digest && sha256(password) === digest);
 }
 
 function healthPayload(req) {
@@ -85,6 +98,24 @@ async function handleLogin(req, res) {
 
   if (!email || !password) {
     return sendJson(req, res, 400, { ok: false, success: false, error: 'Informe email e senha.' });
+  }
+
+  const adminEmail = configuredAdminEmail();
+  if (adminEmail && email === adminEmail && adminPasswordMatches(password)) {
+    const authUser = { id: 'env-admin', email, local_admin: true };
+    const profile = await store.findProfileByAuthUser(authUser).catch(() => null) || localAdminProfile(authUser);
+    const token = createLocalSessionToken(authUser);
+    return sendJson(req, res, 200, {
+      ok: true,
+      success: true,
+      access_token: token,
+      expires_in: localSessionTtlSeconds(),
+      token_type: 'bearer',
+      user: authUser,
+      profile,
+      empresa_id: profile && profile.empresa_id || null,
+      message: 'Login administrativo realizado pelas variaveis do EasyPanel.'
+    });
   }
 
   const supabaseUrl = cleanUrl(process.env.SUPABASE_URL || process.env.SUPABASE_PUBLIC_URL || '');
@@ -160,7 +191,7 @@ function publicConfig(req) {
     plans: publicBillingPlans(),
     storage: store.kind,
     demo_mode: store.kind === 'local',
-    cors_origins: listEnv('CORS_ORIGIN', ['*'])
+    cors_origins: [...new Set([...listEnv('CORS_ORIGIN', []), ...listEnv('FRONTEND_URL', [])])].filter(Boolean)
   };
 }
 
@@ -352,7 +383,7 @@ async function handleCrud(req, res, url, ctx) {
 }
 
 async function handleReports(req, res, url, ctx) {
-  if ((url.pathname === '/api/reports/summary' || url.pathname === '/api/reports/dashboard') && req.method === 'GET') {
+  if ((url.pathname === '/api/reports/summary' || url.pathname === '/api/reports/dashboard' || url.pathname === '/api/dashboard') && req.method === 'GET') {
     const summary = await buildReportsSummary(store, ctx, Object.fromEntries(url.searchParams.entries()));
     return sendJson(req, res, 200, { ok: true, success: true, data: summary });
   }
@@ -665,11 +696,12 @@ function createServer() {
 }
 
 if (require.main === module) {
-  createServer().listen(PORT, () => {
-    console.log(`R2R CRM SaaS API rodando em http://localhost:${PORT}`);
+  createServer().listen(PORT, HOST, () => {
+    console.log(`R2R CRM SaaS API rodando em http://${HOST}:${PORT}`);
     console.log(`[boot] versao      = ${VERSION}`);
     console.log(`[boot] storage     = ${store.kind}`);
     console.log(`[boot] public_dir  = ${PUBLIC_DIR}`);
+    console.log(`[boot] host        = ${HOST}`);
     console.log(`[boot] supabase    = ${process.env.SUPABASE_URL ? 'configurado parcialmente' : 'nao configurado'}`);
   });
 }

@@ -5,6 +5,7 @@ const RESOURCES = {
   assinaturas: { table: 'assinaturas', path: '/api/assinaturas', companyScoped: true, adminOnly: true },
   leads: { table: 'leads', path: '/api/leads', companyScoped: true, search: ['nome', 'email', 'telefone', 'empresa', 'origem_nome', 'campanha'], defaultOrder: 'created_at.desc' },
   clientes: { table: 'clientes', path: '/api/clientes', companyScoped: true, search: ['nome', 'email', 'telefone', 'empresa', 'nicho'], defaultOrder: 'created_at.desc' },
+  contatos: { table: 'clientes', path: '/api/contatos', companyScoped: true, search: ['nome', 'email', 'telefone', 'empresa', 'nicho'], defaultOrder: 'created_at.desc' },
   contacts: { table: 'clientes', path: '/api/contacts', companyScoped: true, search: ['nome', 'email', 'telefone', 'empresa', 'nicho'], defaultOrder: 'created_at.desc' },
   oportunidades: { table: 'oportunidades', path: '/api/oportunidades', companyScoped: true, search: ['servico_interesse', 'status', 'fonte', 'campanha'], defaultOrder: 'created_at.desc' },
   funis: { table: 'funis', path: '/api/funis', companyScoped: true, defaultOrder: 'ordem.asc' },

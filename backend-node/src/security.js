@@ -4,7 +4,8 @@ const { listEnv, numberEnv } = require('./env');
 const buckets = new Map();
 
 function corsHeaders(reqOrigin) {
-  const raw = listEnv('CORS_ORIGIN', ['*']);
+  const configured = [...listEnv('CORS_ORIGIN', []), ...listEnv('FRONTEND_URL', [])];
+  const raw = configured.length ? [...new Set(configured)] : ['*'];
   const allowAll = raw.includes('*');
   const origin = allowAll ? '*' : (reqOrigin && raw.includes(reqOrigin) ? reqOrigin : raw[0]);
   const headers = {
