@@ -1,15 +1,15 @@
 {
   "name": "r2r-crm-saas",
-  "version": "2026.06.29",
-  "description": "CRM SaaS multiempresa para marketing digital, com Node.js e Supabase",
+  "version": "2026.07.02",
+  "description": "R2R CRM SaaS - entrada de compatibilidade para deploy pela raiz",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/run-tests.js",
-    "check": "node --check server.js"
+    "check": "node --check server.js",
+    "test": "node --check server.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": "20.x"
   },
   "dependencies": {}
 }
