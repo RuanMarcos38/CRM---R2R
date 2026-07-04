@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.R2R_BRIDGE_VERSION = '20260704-evo-backend';
+  window.R2R_BRIDGE_VERSION = '20260704-evo-inline';
   console.log('[R2R] Backend bridge version', window.R2R_BRIDGE_VERSION);
 
   var TABLE_ENDPOINTS = {
@@ -635,9 +635,13 @@
   window.conectarWA = window.conectarWhatsApp = async function () {
     try {
       setQrBusy('Gerando QR Code...');
+      var cfg = readWAConfigFromForm();
       var saved = await saveWAConfigIfNeeded(true);
       if (!saved) return;
-      var data = await apiFetch('/api/whatsapp/connect', { method: 'POST', body: JSON.stringify({}) });
+      var payload = { instance: cfg.instance };
+      if (cfg.url) payload.url = cfg.url;
+      if (cfg.apiKey) payload.apiKey = cfg.apiKey;
+      var data = await apiFetch('/api/whatsapp/connect', { method: 'POST', body: JSON.stringify(payload) });
       var qr = data.qr || data.qrcode || data.base64 || data.data;
       if (!data.configured) {
         setQrMessage(data.message || 'WhatsApp nao configurado no backend.', 'error');
