@@ -192,6 +192,50 @@ test('servidor responde health, login, rotas protegidas e Evolution sem config',
     assert.strictEqual(out.res.status, 200);
     assert.strictEqual(out.data.configured, false);
 
+    out = await request(base, 'POST', '/api/integrations/ai', {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      apiKey: 'sk-test'
+    }, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.configured, true);
+    assert.strictEqual(out.data.config.has_api_key, true);
+
+    out = await request(base, 'GET', '/api/integrations/ai', undefined, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.configured, true);
+    assert.strictEqual(out.data.config.has_api_key, true);
+
+    let n8nHit = false;
+    const fakeN8n = http.createServer((req, res) => {
+      n8nHit = true;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    await new Promise(resolve => fakeN8n.listen(0, '127.0.0.1', resolve));
+    const fakeN8nUrl = 'http://127.0.0.1:' + fakeN8n.address().port + '/webhook/teste';
+    try {
+      out = await request(base, 'POST', '/api/integrations/n8n', { webhookUrl: fakeN8nUrl, apiKey: 'n8n-test' }, token);
+      assert.strictEqual(out.res.status, 200);
+      assert.strictEqual(out.data.configured, true);
+      out = await request(base, 'POST', '/api/n8n/test', {}, token);
+      assert.strictEqual(out.res.status, 200);
+      assert.strictEqual(out.data.configured, true);
+      assert.strictEqual(out.data.status, 200);
+      assert.strictEqual(n8nHit, true);
+    } finally {
+      await new Promise(resolve => fakeN8n.close(resolve));
+    }
+
+    out = await request(base, 'POST', '/api/integrations/meta', {
+      token: 'meta-test-token',
+      phoneNumberId: '123',
+      wabaId: '456'
+    }, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.configured, true);
+    assert.strictEqual(out.data.config.has_token, true);
+
     out = await request(base, 'POST', '/api/files/upload', {
       nome: 'contrato.txt',
       mime_type: 'text/plain',

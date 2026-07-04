@@ -222,6 +222,106 @@ function mergeWhatsappConfig(savedConfig, body) {
   });
 }
 
+function normalizeIntegrationType(value) {
+  const type = String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+  return ({
+    ia: 'ai',
+    openai: 'ai',
+    inteligencia: 'ai',
+    metaads: 'meta',
+    'meta-ads': 'meta',
+    'meta-wa': 'meta',
+    whatsappmeta: 'meta',
+    webhook: 'n8n'
+  }[type] || type);
+}
+
+function integrationTypeFromPath(pathname) {
+  const match = String(pathname || '').match(/^\/api\/integrations\/([a-zA-Z0-9_-]+)$/);
+  return match ? normalizeIntegrationType(match[1]) : '';
+}
+
+function integrationDisplayName(type) {
+  return ({
+    ai: 'Inteligencia Artificial',
+    n8n: 'N8N',
+    meta: 'Meta',
+    google: 'Google',
+    whaticket: 'Whaticket'
+  })[type] || type;
+}
+
+async function getIntegrationConfig(ctx, type) {
+  const normalized = normalizeIntegrationType(type);
+  const rows = await store.list('integracoes', { 'eq.tipo': normalized, limit: 1 }, ctx, integrationResource()).catch(() => []);
+  const row = Array.isArray(rows) && rows.length ? rows[0] : null;
+  return {
+    type: normalized,
+    row,
+    config: row && row.config && typeof row.config === 'object' ? row.config : {}
+  };
+}
+
+async function saveIntegrationConfig(ctx, type, body) {
+  const normalized = normalizeIntegrationType(type);
+  const current = await getIntegrationConfig(ctx, normalized);
+  const input = body && typeof body === 'object' ? body : {};
+  const currentConfig = current && current.config && typeof current.config === 'object' ? current.config : {};
+  const source = input.config && typeof input.config === 'object' ? { ...input.config, ...input } : { ...input };
+  delete source.config;
+  delete source.tipo;
+  delete source.nome;
+
+  [
+    'apiKey',
+    'api_key',
+    'key',
+    'token',
+    'accessToken',
+    'access_token',
+    'clientSecret',
+    'client_secret'
+  ].forEach(field => {
+    if (source[field] === '' || source[field] == null) delete source[field];
+  });
+
+  const payload = {
+    tipo: normalized,
+    nome: input.nome || input.name || (current.row && current.row.nome) || integrationDisplayName(normalized),
+    ativa: input.ativa !== false && input.active !== false,
+    config: {
+      ...currentConfig,
+      provider: input.provider || source.provider || currentConfig.provider || normalized,
+      ...source,
+      updated_at: new Date().toISOString()
+    }
+  };
+  const resource = integrationResource({ allowSensitive: true });
+  return current.row
+    ? await store.update('integracoes', current.row.id, payload, ctx, resource)
+    : await store.insert('integracoes', payload, ctx, resource);
+}
+
+function publicIntegrationResponse(row, type) {
+  const cfg = row && row.config && typeof row.config === 'object' ? row.config : {};
+  return {
+    ok: true,
+    success: true,
+    configured: !!row,
+    type: normalizeIntegrationType(type),
+    data: row ? safeData(row) : null,
+    config: {
+      provider: cfg.provider || normalizeIntegrationType(type),
+      url: cfg.url || cfg.webhookUrl || cfg.webhook_url || '',
+      model: cfg.model || cfg.modelo || '',
+      active: row ? row.ativa !== false : false,
+      has_api_key: !!(cfg.apiKey || cfg.api_key || cfg.key),
+      has_token: !!(cfg.token || cfg.accessToken || cfg.access_token),
+      has_webhook: !!(cfg.webhookUrl || cfg.webhook_url || cfg.webhook || cfg.url)
+    }
+  };
+}
+
 async function saveWhatsappConfig(ctx, body) {
   const current = await getWhatsappIntegration(ctx);
   const currentConfig = current && current.config && typeof current.config === 'object' ? current.config : {};
@@ -680,9 +780,31 @@ async function handleIntegrations(req, res, url, ctx) {
     return sendJson(req, res, 200, { ok: true, success: true, integrations: integrationStatus() });
   }
 
+  const genericIntegrationType = integrationTypeFromPath(url.pathname);
+  if (genericIntegrationType && !['whatsapp', 'evolution', 'google'].includes(genericIntegrationType)) {
+    if (req.method === 'GET') {
+      const current = await getIntegrationConfig(ctx, genericIntegrationType);
+      return sendJson(req, res, 200, publicIntegrationResponse(current.row, genericIntegrationType));
+    }
+    if (req.method === 'POST' || req.method === 'PUT') {
+      if (!ctx.permissions.admin) return sendJson(req, res, 403, { ok: false, success: false, error: 'Somente admin pode configurar integracoes.' });
+      const row = await saveIntegrationConfig(ctx, genericIntegrationType, await readBody(req));
+      return sendJson(req, res, 200, {
+        ...publicIntegrationResponse(row, genericIntegrationType),
+        configured: true,
+        message: `${integrationDisplayName(genericIntegrationType)} salvo no backend.`
+      });
+    }
+  }
+
   if (url.pathname === '/api/ai/test' && req.method === 'POST') {
-    const out = await openAIChat('Responda apenas: IA conectada com sucesso.', [], ctx);
-    return sendJson(req, res, 200, { ok: true, ...out });
+    const ai = await getIntegrationConfig(ctx, 'ai');
+    try {
+      const out = await openAIChat('Responda apenas: IA conectada com sucesso.', [], { ...ctx, aiConfig: ai.config });
+      return sendJson(req, res, 200, { ok: true, ...out });
+    } catch (error) {
+      return sendJson(req, res, 200, { ok: false, success: false, configured: true, error: error.message, message: 'IA configurada, mas o provedor recusou o teste.' });
+    }
   }
 
   if (url.pathname === '/api/ai/chat' && req.method === 'POST') {
@@ -710,7 +832,13 @@ async function handleIntegrations(req, res, url, ctx) {
         ];
       }
     }
-    const out = await openAIChat(body.message || body.text || 'Ola', history, ctx);
+    const ai = await getIntegrationConfig(ctx, 'ai');
+    let out;
+    try {
+      out = await openAIChat(body.message || body.text || 'Ola', history, { ...ctx, aiConfig: ai.config });
+    } catch (error) {
+      return sendJson(req, res, 200, { ok: false, success: false, configured: true, error: error.message, reply: 'IA configurada, mas o provedor recusou a requisicao. Verifique API key/modelo no backend.' });
+    }
     if (body.lead_id) {
       await store.insert('atividades', {
         lead_id: body.lead_id,
@@ -810,15 +938,17 @@ async function handleIntegrations(req, res, url, ctx) {
   }
 
   if (url.pathname === '/api/meta/status' && req.method === 'GET') {
-    const result = await metaRequest('/me?fields=id,name');
+    const meta = await getIntegrationConfig(ctx, 'meta');
+    const result = await metaRequest('/me?fields=id,name', meta.config);
     return sendJson(req, res, 200, result);
   }
 
   if (url.pathname === '/api/meta/campaigns' && req.method === 'GET') {
-    const accountId = process.env.META_AD_ACCOUNT_ID || url.searchParams.get('account_id') || '';
+    const meta = await getIntegrationConfig(ctx, 'meta');
+    const accountId = meta.config.adAccountId || meta.config.ad_account_id || process.env.META_AD_ACCOUNT_ID || url.searchParams.get('account_id') || '';
     if (!accountId) return sendJson(req, res, 200, { ok: true, configured: false, data: [], message: 'Configure META_AD_ACCOUNT_ID no backend.' });
     const fields = 'name,status,objective,daily_budget,lifetime_budget,insights{spend,reach,impressions,clicks,actions}';
-    const result = await metaRequest(`/${encodeURIComponent(accountId)}/campaigns?fields=${encodeURIComponent(fields)}&limit=50`);
+    const result = await metaRequest(`/${encodeURIComponent(accountId)}/campaigns?fields=${encodeURIComponent(fields)}&limit=50`, meta.config);
     return sendJson(req, res, 200, result);
   }
 
@@ -827,11 +957,16 @@ async function handleIntegrations(req, res, url, ctx) {
   }
 
   if (url.pathname === '/api/n8n/test' && req.method === 'POST') {
-    const webhook = process.env.N8N_WEBHOOK_URL;
+    const n8n = await getIntegrationConfig(ctx, 'n8n');
+    const webhook = n8n.config.webhookUrl || n8n.config.webhook_url || n8n.config.webhook || process.env.N8N_WEBHOOK_URL || n8n.config.url || '';
     if (!webhook) return sendJson(req, res, 200, { ok: true, configured: false, message: 'N8N_WEBHOOK_URL nao configurado.' });
     const payload = { test: true, source: 'r2r-crm', empresa_id: ctx.empresaId, at: new Date().toISOString() };
-    const response = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    return sendJson(req, res, 200, { ok: true, configured: true, status: response.status });
+    try {
+      const response = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      return sendJson(req, res, 200, { ok: true, configured: true, status: response.status });
+    } catch (error) {
+      return sendJson(req, res, 200, { ok: false, success: false, configured: true, status: 'unreachable', error: error.message, message: 'N8N configurado, mas o webhook nao respondeu.' });
+    }
   }
 
   return null;

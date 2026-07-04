@@ -145,8 +145,9 @@ function evolutionNetworkError(error) {
 }
 
 async function openAIChat(message, history = [], ctx = {}) {
-  const key = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  const aiConfig = ctx.aiConfig || ctx.ai_config || {};
+  const key = aiConfig.apiKey || aiConfig.api_key || aiConfig.key || process.env.OPENAI_API_KEY;
+  const model = aiConfig.model || aiConfig.modelo || process.env.OPENAI_MODEL || 'gpt-4o-mini';
   if (!key) {
     return {
       configured: false,
@@ -321,11 +322,11 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
   }
 }
 
-async function metaRequest(pathname) {
-  const token = process.env.META_ACCESS_TOKEN;
+async function metaRequest(pathname, overrideConfig = {}) {
+  const token = overrideConfig.accessToken || overrideConfig.access_token || overrideConfig.token || overrideConfig.apiKey || overrideConfig.api_key || process.env.META_ACCESS_TOKEN;
   if (!token) return { ok: true, configured: false, data: null, message: 'META_ACCESS_TOKEN nao configurado.' };
   const separator = pathname.includes('?') ? '&' : '?';
-  const version = String(process.env.META_GRAPH_VERSION || 'v20.0').replace(/^\/+/, '');
+  const version = String(overrideConfig.graphVersion || overrideConfig.graph_version || process.env.META_GRAPH_VERSION || 'v20.0').replace(/^\/+/, '');
   const response = await fetchWithTimeout(`https://graph.facebook.com/${version}${pathname}${separator}access_token=${encodeURIComponent(token)}`);
   const data = await readJsonResponse(response);
   if (!response.ok) return { ok: false, configured: true, error: data.error && data.error.message || `HTTP ${response.status}`, raw: data };
