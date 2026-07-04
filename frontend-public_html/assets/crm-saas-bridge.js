@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.R2R_BRIDGE_VERSION = '20260704-evo-inline';
+  window.R2R_BRIDGE_VERSION = '20260704-full-backend';
   console.log('[R2R] Backend bridge version', window.R2R_BRIDGE_VERSION);
 
   var TABLE_ENDPOINTS = {
@@ -80,6 +80,20 @@
 
   function byId(id) {
     return document.getElementById(id);
+  }
+
+  function inputValue(ids) {
+    ids = Array.isArray(ids) ? ids : [ids];
+    for (var i = 0; i < ids.length; i += 1) {
+      var el = byId(ids[i]);
+      if (el && typeof el.value !== 'undefined' && String(el.value).trim()) return String(el.value).trim();
+    }
+    return '';
+  }
+
+  function checked(id) {
+    var el = byId(id);
+    return !!(el && el.checked);
   }
 
   function toast(message, type) {
@@ -221,6 +235,11 @@
   }
 
   window.r2rApiFetch = apiFetch;
+  window.r2rApi = async function (path, opts) {
+    path = String(path || '/api/health');
+    if (path === '/health' || path === '/healthz') path = '/api/health';
+    return apiFetch(path, opts || {});
+  };
   window.R2RBridge = {
     apiFetch: apiFetch,
     checkBackendHealth: checkBackendHealth,
@@ -392,14 +411,16 @@
       toast('Backend inacessivel: ' + error.message, 'error');
     }
   };
+  window.testarBackendCompleto = window.testarBackendR2R;
 
   window.salvarBackendUrl = function () {
-    var input = byId('backendUrl') || byId('apiBaseInput') || byId('r2rBackendUrl');
+    var input = byId('backendUrl') || byId('backendUrlInput') || byId('apiBaseInput') || byId('r2rBackendUrl');
     var url = input && input.value ? cleanUrl(input.value) : apiBase();
     if (!url) return toast('Informe a URL do backend.', 'warn');
     window.R2R_API_BASE = url;
     localStorage.setItem('r2r_api_base', url);
     toast('URL do backend salva.', 'success');
+    if (typeof window.renderTestsGrid === 'function') window.renderTestsGrid();
   };
 
   function readWAConfigFromForm() {
@@ -705,8 +726,33 @@
     }
   };
 
+  async function saveIntegration(type, payload) {
+    return apiFetch('/api/integrations/' + encodeURIComponent(type), {
+      method: 'POST',
+      body: JSON.stringify(payload || {})
+    });
+  }
+
   window.salvarIA = window.saveIAConfig = async function () {
-    toast('A chave de IA deve ser configurada no .env do backend em OPENAI_API_KEY. O frontend nao salva segredos.', 'info');
+    try {
+      var payload = {
+        provider: inputValue('aiProv') || 'openai',
+        model: inputValue('aiModelo') || 'gpt-4o-mini',
+        apiKey: inputValue('aiKey'),
+        mode: inputValue('aiMode') || 'suggestion',
+        active: checked('aiAtivo')
+      };
+      if (!payload.apiKey) return toast('Informe a API Key da IA para salvar no backend.', 'warn');
+      await saveIntegration('ai', payload);
+      var keyEl = byId('aiKey');
+      if (keyEl) {
+        keyEl.value = '';
+        keyEl.placeholder = 'API Key salva no backend - preencha apenas para trocar';
+      }
+      toast('IA salva com seguranca no backend.', 'success');
+    } catch (error) {
+      toast('Erro ao salvar IA: ' + error.message, 'error');
+    }
   };
 
   window.testarIA = async function () {
@@ -719,7 +765,36 @@
   };
 
   window.salvarN8NConfig = async function () {
-    toast('Configure N8N_WEBHOOK_URL no .env do backend. O frontend nao salva API keys de automacao.', 'info');
+    try {
+      var payload = {
+        url: inputValue('n8nUrl'),
+        apiKey: inputValue('n8nApiKey'),
+        webhookUrl: inputValue('n8nWebhookUrl'),
+        events: {
+          novo_lead: checked('ev-novo-lead'),
+          etapa: checked('ev-etapa'),
+          fechado: checked('ev-fechado'),
+          mensagem: checked('ev-mensagem'),
+          tarefa: checked('ev-tarefa'),
+          solicitacao: checked('ev-solicitacao')
+        }
+      };
+      if (!payload.url && !payload.webhookUrl) return toast('Informe a URL base ou webhook do N8N.', 'warn');
+      await saveIntegration('n8n', payload);
+      var keyEl = byId('n8nApiKey');
+      if (keyEl) {
+        keyEl.value = '';
+        keyEl.placeholder = 'API Key salva no backend - preencha apenas para trocar';
+      }
+      var badge = byId('n8nBadge');
+      if (badge) {
+        badge.textContent = 'Configurado';
+        badge.style.color = '#86efac';
+      }
+      toast('N8N salvo no backend.', 'success');
+    } catch (error) {
+      toast('Erro ao salvar N8N: ' + error.message, 'error');
+    }
   };
 
   window.testarN8N = window.testarWebhookN8N = async function () {
@@ -732,11 +807,36 @@
   };
 
   window.salvarMetaWAConfig = async function () {
-    toast('Tokens da Meta Cloud API devem ficar no backend. Configure META_ACCESS_TOKEN e dados da conta no .env.', 'info');
+    try {
+      var payload = {
+        phoneNumberId: inputValue('waMetaPhoneId'),
+        wabaId: inputValue('waMetaWabaId'),
+        businessId: inputValue('waMetaBusinessId'),
+        verifyToken: inputValue('waMetaVerify'),
+        token: inputValue('waMetaToken'),
+        accessToken: inputValue('waMetaToken'),
+        adAccountId: inputValue(['metaAdAccountId', 'metaAccountId'])
+      };
+      if (!payload.token && !payload.phoneNumberId && !payload.wabaId) return toast('Informe pelo menos Token, Phone Number ID ou WABA ID da Meta.', 'warn');
+      await saveIntegration('meta', payload);
+      var tokenEl = byId('waMetaToken');
+      if (tokenEl) {
+        tokenEl.value = '';
+        tokenEl.placeholder = 'Token salvo no backend - preencha apenas para trocar';
+      }
+      toast('Meta salva com seguranca no backend.', 'success');
+    } catch (error) {
+      toast('Erro ao salvar Meta: ' + error.message, 'error');
+    }
   };
 
   window.sincronizarTemplatesMeta = async function () {
-    toast('Sincronizacao de templates Meta deve passar pelo backend para proteger o token.', 'info');
+    try {
+      var data = await apiFetch('/api/meta/status', { method: 'GET' });
+      toast(data.configured ? 'Meta sincronizada pelo backend.' : (data.message || 'Meta ainda nao configurada no backend.'), data.configured ? 'success' : 'info');
+    } catch (error) {
+      toast('Erro Meta: ' + error.message, 'error');
+    }
   };
 
   window.salvarWhatickConfig = async function () {
@@ -752,6 +852,51 @@
     } catch (error) {
       toast('Erro ao gerar relatorio: ' + error.message, 'error');
     }
+  };
+
+  window.testarSupabaseR2R = async function () {
+    try {
+      var data = await apiFetch('/api/me', { method: 'GET' });
+      toast(data.profile ? 'Supabase/Auth OK: ' + (data.profile.email || 'usuario conectado') : 'Login OK, perfil ausente em usuarios.', data.profile ? 'success' : 'warn');
+    } catch (error) {
+      toast('Supabase/Auth: ' + error.message, 'error');
+    }
+  };
+
+  window.testarCardsTabelas = async function () {
+    try {
+      var tables = ['/api/leads?limit=1', '/api/clientes?limit=1', '/api/tarefas?limit=1', '/api/campanhas?limit=1', '/api/atendimentos?limit=1'];
+      await Promise.all(tables.map(function (path) { return apiFetch(path, { method: 'GET' }); }));
+      toast('Tabelas principais respondendo pelo backend.', 'success');
+    } catch (error) {
+      toast('Erro nas tabelas/cards: ' + error.message, 'error');
+    }
+  };
+
+  window.renderTestsGrid = function () {
+    var box = byId('testsGrid') || byId('integrationsTestsGrid') || byId('testesGrid');
+    if (!box) return;
+    var base = apiBase();
+    var items = [
+      { label: 'Backend/API', sub: base || 'Nao configurado', fn: 'testarBackendCompleto()' },
+      { label: 'Supabase/Auth', sub: 'Valida sessao e perfil', fn: 'testarSupabaseR2R()' },
+      { label: 'Cards/Tabelas', sub: 'Leads, clientes, tarefas e atendimentos', fn: 'testarCardsTabelas()' },
+      { label: 'WhatsApp/Evolution', sub: 'Status pelo backend', fn: 'testarEvoAPI()' },
+      { label: 'IA/OpenAI', sub: 'Teste pelo backend', fn: 'testarIA()' },
+      { label: 'Meta', sub: 'Teste pelo backend', fn: 'testarMetaWA()' },
+      { label: 'N8N', sub: 'Teste pelo backend', fn: 'testarN8N()' }
+    ];
+    box.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'
+      + '<input id="backendUrlInput" value="' + escapeHtml(base) + '" placeholder="https://api.r2rmarketingdigital.com.br" style="flex:1;min-width:260px;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text1);font-family:inherit;font-size:.83rem;outline:none">'
+      + '<button onclick="salvarBackendUrl()" style="padding:9px 14px;background:var(--purple);border:none;border-radius:7px;color:#fff;font-size:.8rem;font-weight:700;cursor:pointer;font-family:inherit">Salvar URL</button>'
+      + '<button onclick="testarBackendCompleto()" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:7px;color:var(--gray2);font-size:.8rem;font-weight:700;cursor:pointer;font-family:inherit">Testar Backend</button>'
+      + '</div>'
+      + items.map(function (item) {
+        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">'
+          + '<div><div style="font-weight:700;color:var(--text1);font-size:.84rem">' + escapeHtml(item.label) + '</div><div style="color:var(--gray2);font-size:.75rem;margin-top:2px">' + escapeHtml(item.sub) + '</div></div>'
+          + '<button onclick="' + item.fn + '" style="padding:7px 14px;background:var(--purple);border:none;border-radius:7px;color:#fff;font-size:.78rem;font-weight:600;cursor:pointer;font-family:inherit">Testar</button>'
+          + '</div>';
+      }).join('');
   };
 
   document.addEventListener('DOMContentLoaded', async function () {
