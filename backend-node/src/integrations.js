@@ -132,6 +132,18 @@ async function evolutionHttp(cfg, pathname, method = 'GET', body) {
   return { response, data };
 }
 
+function evolutionNetworkError(error) {
+  return {
+    ok: false,
+    success: false,
+    configured: true,
+    connected: false,
+    status: 'unreachable',
+    error: error && error.message || 'Falha ao acessar Evolution API.',
+    message: 'Evolution API inacessivel. Verifique se a URL esta com https://, se o dominio existe no EasyPanel e se a API esta online.'
+  };
+}
+
 async function openAIChat(message, history = [], ctx = {}) {
   const key = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
@@ -214,18 +226,22 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
   }
 
   if (pathname === '/instance/fetchInstances') {
-    const response = await fetchWithTimeout(cfg.url + pathname, { headers: { apikey: cfg.key } });
-    const data = await readJsonResponse(response);
-    if (!response.ok) return { ok: false, configured: true, status: 'error', error: data.message || `HTTP ${response.status}` };
-    const list = Array.isArray(data) ? data : [];
-    const found = list.find(item =>
-      item.name === cfg.instance ||
-      item.instanceName === cfg.instance ||
-      item.id === cfg.instance ||
-      (item.instance && item.instance.instanceName === cfg.instance)
-    );
-    const status = found && (found.connectionStatus || found.status || found.state || (found.instance && found.instance.state)) || 'not_found';
-    return { ok: true, success: true, configured: true, connected: status === 'open', status, instance: cfg.instance, data: found || null };
+    try {
+      const response = await fetchWithTimeout(cfg.url + pathname, { headers: { apikey: cfg.key } });
+      const data = await readJsonResponse(response);
+      if (!response.ok) return { ok: false, success: false, configured: true, connected: false, status: 'error', error: data.message || `HTTP ${response.status}` };
+      const list = Array.isArray(data) ? data : [];
+      const found = list.find(item =>
+        item.name === cfg.instance ||
+        item.instanceName === cfg.instance ||
+        item.id === cfg.instance ||
+        (item.instance && item.instance.instanceName === cfg.instance)
+      );
+      const status = found && (found.connectionStatus || found.status || found.state || (found.instance && found.instance.state)) || 'not_found';
+      return { ok: true, success: true, configured: true, connected: status === 'open', status, instance: cfg.instance, data: found || null };
+    } catch (error) {
+      return evolutionNetworkError(error);
+    }
   }
 
   if (pathname === '/instance/connect' && method === 'POST') {
@@ -270,16 +286,21 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       }
     }
 
+    const failedAttempts = attempts.filter(attempt => attempt.error);
+    const onlyErrors = attempts.length > 0 && failedAttempts.length === attempts.length;
     return {
       ok: true,
       success: false,
       configured: true,
-      status: 'qrcode_not_returned',
+      connected: false,
+      status: onlyErrors ? 'unreachable' : 'qrcode_not_returned',
       qrcode: null,
       qrCode: null,
       qr: null,
       instance,
-      message: 'Evolution API respondeu, mas nao retornou QR Code. Verifique se a instancia ja esta conectada, se o nome da instancia esta correto ou consulte os detalhes no log.',
+      message: onlyErrors
+        ? 'Evolution API inacessivel. Verifique a URL/domínio no EasyPanel e confirme se a API esta online.'
+        : 'Evolution API respondeu, mas nao retornou QR Code. Verifique se a instancia ja esta conectada, se o nome da instancia esta correto ou consulte os detalhes no log.',
       attempts: attempts.map(attempt => ({
         route: attempt.route,
         method: attempt.method,
@@ -290,10 +311,14 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
     };
   }
 
-  const { response, data } = await evolutionHttp(cfg, path, method, body);
-  if (!response.ok) return { ok: false, success: false, configured: true, status: 'error', error: data.message || data.error || `HTTP ${response.status}`, raw: data };
-  const qr = normalizeQrDataUrl(data);
-  return { ok: true, success: true, configured: true, status: qr ? 'qrcode' : 'ok', qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(data), raw: data, data };
+  try {
+    const { response, data } = await evolutionHttp(cfg, path, method, body);
+    if (!response.ok) return { ok: false, success: false, configured: true, connected: false, status: 'error', error: data.message || data.error || `HTTP ${response.status}`, raw: data };
+    const qr = normalizeQrDataUrl(data);
+    return { ok: true, success: true, configured: true, status: qr ? 'qrcode' : 'ok', qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(data), raw: data, data };
+  } catch (error) {
+    return evolutionNetworkError(error);
+  }
 }
 
 async function metaRequest(pathname) {

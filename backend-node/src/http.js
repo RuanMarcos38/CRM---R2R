@@ -8,7 +8,12 @@ function jsonLimit() {
 }
 
 function cleanUrl(value) {
-  return String(value || '').trim().replace(/\/+$/, '');
+  let url = String(value || '').trim();
+  if (!url) return '';
+  if (!/^https?:\/\//i.test(url) && /^[A-Za-z0-9.-]+(?::\d+)?(\/|$)/.test(url)) {
+    url = /^(localhost|127\.0\.0\.1)(?::|\/|$)/i.test(url) ? `http://${url}` : `https://${url}`;
+  }
+  return url.replace(/\/+$/, '');
 }
 
 function contentType(filePath) {
