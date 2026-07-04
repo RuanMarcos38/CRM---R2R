@@ -21,6 +21,9 @@
 - [ ] `.env` criado a partir de `.env.example`.
 - [ ] `NODE_ENV=production`.
 - [ ] `PORT=3000` ou porta definida pelo provedor.
+- [ ] Dominio de API aponta para o backend Node: `https://api.r2rmarketingdigital.com.br`.
+- [ ] `https://api.r2rmarketingdigital.com.br/health` retorna JSON, nao HTML nem 502.
+- [ ] O dominio do frontend `https://crm.r2rmarketingdigital.com.br` nao deve responder `/api/*` com `index.html`.
 - [ ] `SUPABASE_URL` configurado.
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` configurado no backend.
 - [ ] `CORS_ORIGIN` aponta para o dominio real do frontend.
@@ -41,7 +44,8 @@
 ## Frontend
 
 - [ ] Arquivos de `frontend-public_html` enviados para `public_html`.
-- [ ] `config.js` aponta para a URL publica do backend.
+- [ ] `config.js` aponta para `https://api.r2rmarketingdigital.com.br`.
+- [ ] Limpar `localStorage.r2r_api_base` no navegador se ele ficou salvo como `https://crm.r2rmarketingdigital.com.br`.
 - [ ] `index.html` carrega sem tela quebrada.
 - [ ] `checkBackendHealth()` retorna backend online.
 - [ ] Login abre o painel do CRM.

@@ -189,6 +189,17 @@ Webhook Evolution recomendado:
 - Alternativa: enviar `x-api-key` gerada no CRM para vincular o webhook a uma empresa.
 - O backend deduplica por `external_id` e salva dados em `conversas`, `mensagens` e `webhooks_logs`.
 
+### Diagnostico do erro "Nao configurado" no WhatsApp
+
+Se a tela mostrar "Preencha a URL da Evolution API e a API Key Global antes de conectar", valide primeiro o backend:
+
+```bash
+curl https://api.r2rmarketingdigital.com.br/health
+curl https://api.r2rmarketingdigital.com.br/api/config
+```
+
+As duas rotas precisam retornar JSON do backend. Se retornarem `502 Gateway Incorreto`, o backend Node esta fora do ar no EasyPanel ou a porta/start command esta incorreta. Se `https://crm.r2rmarketingdigital.com.br/api/health` retornar `index.html`, o frontend esta tentando usar o dominio estatico como API; publique `frontend-public_html/config.js` atualizado ou limpe `localStorage.r2r_api_base` no navegador.
+
 ## 7. Comandos de validacao
 
 Em ambiente com Node.js 18+:

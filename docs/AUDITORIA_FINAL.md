@@ -26,6 +26,9 @@ Data da entrega: 2026-07-04
 - As policies antigas permitiam escrita ampla demais para qualquer usuario autenticado dentro do tenant.
 - Faltavam aliases operacionais para `contatos`, `atendimentos` e `logs`.
 - Faltavam variaveis de Google Ads/OAuth, Meta OAuth, Evolution webhook, upload e `EVOLUTION_INSTANCE_NAME`.
+- Em producao, `https://crm.r2rmarketingdigital.com.br/api/health` e `/api/config` estavam retornando `index.html`, nao JSON do backend.
+- O subdominio `https://api.r2rmarketingdigital.com.br` existia no DNS, mas respondia `502 Gateway Incorreto`, indicando backend fora do ar ou proxy EasyPanel incorreto.
+- O `config.js` publico estava sem `R2R_API_BASE`, deixando o frontend salvar/usar o dominio estatico como se fosse API.
 
 ## Correcoes aplicadas
 
@@ -79,6 +82,8 @@ Data da entrega: 2026-07-04
 - Adicionado status de Google em `/api/google/status` para estrutura futura de OAuth/Ads.
 - Ajustado `EVOLUTION_INSTANCE_NAME` como nome preferencial, mantendo `EVOLUTION_INSTANCE` como alias legado.
 - Atualizado `.env.example` com variaveis de deploy, Supabase, JWT futuro e Evolution API.
+- Ajustado `frontend-public_html/config.js` para apontar a API publica para `https://api.r2rmarketingdigital.com.br`.
+- Documentado diagnostico para quando `/api/health` retorna HTML ou a API retorna 502.
 - Atualizado `Dockerfile` para expor a porta 3000.
 - Reescritos testes para cobrir servidor HTTP, health, login, rotas protegidas, aliases, upload, webhook Evolution e Evolution sem configuracao.
 

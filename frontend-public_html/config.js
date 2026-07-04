@@ -3,7 +3,7 @@
 // N8N key ou qualquer segredo. No navegador ficam apenas URLs publicas.
 
 window.R2R_CONFIG = Object.assign({
-  API_BASE_URL: '',
+  API_BASE_URL: 'https://api.r2rmarketingdigital.com.br',
   APP_NAME: 'R2R CRM',
   ENV: 'production',
   SUPABASE_URL: '',
