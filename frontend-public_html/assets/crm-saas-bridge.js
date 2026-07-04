@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.R2R_BRIDGE_VERSION = '20260703-wa-config-hardfix';
+  window.R2R_BRIDGE_VERSION = '20260704-evo-backend';
   console.log('[R2R] Backend bridge version', window.R2R_BRIDGE_VERSION);
 
   var TABLE_ENDPOINTS = {
@@ -57,6 +57,9 @@
           ok: xhr.status >= 200 && xhr.status < 300,
           status: xhr.status,
           statusText: xhr.statusText,
+          headers: {
+            get: function (name) { return xhr.getResponseHeader(name); }
+          },
           text: function () { return Promise.resolve(body); },
           json: function () { return Promise.resolve(body ? JSON.parse(body) : {}); }
         });
@@ -84,19 +87,12 @@
   }
 
   function cleanUrl(value) {
-    return String(value || '').trim().replace(/\/+$/, '');
-  }
-
-  function normalizeInstanceName(value) {
-    var normalized = String(value || 'r2r-crm')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 64);
-    return normalized || 'r2r-crm';
+    var url = String(value || '').trim();
+    if (!url) return '';
+    if (!/^https?:\/\//i.test(url) && /^[A-Za-z0-9.-]+(?::\d+)?(\/|$)/.test(url)) {
+      url = /^(localhost|127\.0\.0\.1)(?::|\/|$)/i.test(url) ? 'http://' + url : 'https://' + url;
+    }
+    return url.replace(/\/+$/, '');
   }
 
   function currentOrigin() {
@@ -130,8 +126,27 @@
         add(window.location.protocol + '//' + host + ':3000');
         add(window.location.protocol + '//' + host + ':3001');
       }
+      if (host === 'crm.r2rmarketingdigital.com.br') add('https://api.r2rmarketingdigital.com.br');
+      if (host.indexOf('crm.') === 0) add(window.location.protocol + '//api.' + host.slice(4));
     } catch (e) {}
     return list;
+  }
+
+  function responseHeader(res, name) {
+    try {
+      return res && res.headers && typeof res.headers.get === 'function' ? String(res.headers.get(name) || '') : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function assertApiResponse(res, path) {
+    if (String(path || '').indexOf('/api/') !== 0) return res;
+    var contentType = responseHeader(res, 'content-type').toLowerCase();
+    if (res && res.ok && contentType.indexOf('text/html') >= 0) {
+      throw new Error('A URL da API esta apontando para o frontend. Configure o backend em https://api.r2rmarketingdigital.com.br.');
+    }
+    return res;
   }
 
   async function discoverBackend() {
@@ -154,15 +169,15 @@
 
   async function apiRequest(path, opts) {
     var base = await discoverBackend();
-    try {
-      return await httpFetch(base + path, opts || {});
-    } catch (firstError) {
+      try {
+        return assertApiResponse(await httpFetch(base + path, opts || {}), path);
+      } catch (firstError) {
       discoveredApiBase = '';
       var candidates = apiBaseCandidates().filter(function (candidate) { return candidate !== base; });
       var lastError = firstError;
       for (var i = 0; i < candidates.length; i += 1) {
         try {
-          var res = await httpFetch(candidates[i] + path, opts || {});
+          var res = assertApiResponse(await httpFetch(candidates[i] + path, opts || {}), path);
           rememberApiBase(candidates[i]);
           return res;
         } catch (error) {
@@ -191,7 +206,16 @@
     if (token) headers.Authorization = 'Bearer ' + token;
     var res = await apiRequest(path, Object.assign({}, opts, { headers: headers }));
     var data = {};
-    try { data = await res.json(); } catch (e) {}
+    var text = '';
+    try { text = await res.text(); } catch (e) {}
+    if (/^\s*<!doctype html/i.test(text) || /^\s*<html/i.test(text)) {
+      if (!res.ok) throw new Error('HTTP ' + res.status + ': backend/API indisponivel.');
+      throw new Error('Backend indisponivel: a rota da API retornou HTML do frontend.');
+    }
+    try { data = text ? JSON.parse(text) : {}; } catch (e) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      throw new Error('Backend retornou resposta invalida em JSON.');
+    }
     if (!res.ok || data.ok === false) throw new Error(data.error || data.message || ('HTTP ' + res.status));
     return data;
   }
@@ -379,29 +403,25 @@
   };
 
   function readWAConfigFromForm() {
-    ensureEvolutionConfigPanel();
     var urlEl = byId('waEvoUrl') || byId('waEvoUrl2');
     var keyEl = byId('waEvoKey') || byId('waEvoKey2');
     var instEl = byId('waEvoInst') || byId('waEvoInstance') || byId('waEvoInst2');
-    var instance = normalizeInstanceName(instEl && instEl.value || window.WA_CFG && (window.WA_CFG.inst || window.WA_CFG.instance) || 'r2r-crm');
-    if (instEl && instEl.value !== instance) instEl.value = instance;
     return {
       url: cleanUrl(urlEl && urlEl.value || window.WA_CFG && window.WA_CFG.url || ''),
       apiKey: String(keyEl && keyEl.value || '').trim(),
-      instance: instance
+      instance: String(instEl && instEl.value || window.WA_CFG && (window.WA_CFG.inst || window.WA_CFG.instance) || 'r2r-crm').trim() || 'r2r-crm'
     };
   }
 
   function setWAConfigFields(config) {
     config = config || {};
-    ensureEvolutionConfigPanel();
     ['waEvoUrl', 'waEvoUrl2'].forEach(function (id) {
       var el = byId(id);
       if (el && config.url) el.value = config.url;
     });
     ['waEvoInst', 'waEvoInstance', 'waEvoInst2'].forEach(function (id) {
       var el = byId(id);
-      if (el) el.value = normalizeInstanceName(config.instance || config.inst || 'r2r-crm');
+      if (el) el.value = config.instance || config.inst || 'r2r-crm';
     });
     ['waEvoKey', 'waEvoKey2'].forEach(function (id) {
       var el = byId(id);
@@ -410,7 +430,7 @@
         el.placeholder = config.has_api_key ? 'API Key salva no backend - preencha apenas para trocar' : 'Chave global da Evolution API';
       }
     });
-    window.WA_CFG = { url: config.url || '', inst: normalizeInstanceName(config.instance || config.inst || 'r2r-crm'), key: '' };
+    window.WA_CFG = { url: config.url || '', inst: config.instance || config.inst || 'r2r-crm', key: '' };
     try { localStorage.setItem('r2r_wa_cfg', JSON.stringify(window.WA_CFG)); } catch (e) {}
   }
 
@@ -484,139 +504,6 @@
     return true;
   }
 
-  function nearestPanelChild(el, panel, grid) {
-    var node = el;
-    while (node && node !== panel) {
-      if (grid && node.parentNode === grid) return node;
-      if (!grid && node.parentNode === panel) return node;
-      node = node.parentNode;
-    }
-    return null;
-  }
-
-  function makeVisible(el, display) {
-    if (!el || !el.style) return;
-    if (el.classList) el.classList.remove('hidden');
-    el.hidden = false;
-    el.style.display = display || '';
-    el.style.visibility = 'visible';
-    el.style.opacity = '1';
-  }
-
-  function firstDirectGrid(panel) {
-    if (!panel || !panel.children) return null;
-    for (var i = 0; i < panel.children.length; i += 1) {
-      var child = panel.children[i];
-      if (child.classList && child.classList.contains('r2r-wa-evo-grid')) return child;
-      if (child.style && String(child.style.gridTemplateColumns || '').trim()) return child;
-    }
-    return panel.querySelector('.r2r-wa-evo-grid') || panel.querySelector('[style*="grid-template-columns"]');
-  }
-
-  function buildEvolutionConfigPanel() {
-    var panel = document.createElement('div');
-    panel.id = 'waEvoConfigBloco';
-    panel.innerHTML =
-      '<div style="font-size:.82rem;font-weight:700;color:var(--text1);margin-bottom:10px">Configurar Evolution API</div>' +
-      '<div id="waEvoConfigHint" style="background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:11px;font-size:.75rem;color:var(--gray2);line-height:1.7;margin-bottom:12px">' +
-        '<strong style="color:var(--text2)">Dados necessarios:</strong> URL publica da Evolution, API Key Global e nome da instancia.' +
-      '</div>' +
-      '<div class="form-group"><label>URL da Evolution API</label><input type="text" id="waEvoUrl" placeholder="https://evolution.seudominio.com.br"></div>' +
-      '<div class="form-group"><label>API Key Global</label><input type="password" id="waEvoKey" placeholder="Chave global da Evolution API"></div>' +
-      '<div class="form-group"><label>Nome da Instancia</label><input type="text" id="waEvoInst" value="r2r-crm" placeholder="r2r-crm"></div>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">' +
-        '<button type="button" onclick="salvarWAConfig()" style="padding:8px 16px;background:var(--purple);border:none;border-radius:6px;color:#fff;font-weight:600;font-size:.81rem;cursor:pointer;font-family:inherit">Salvar</button>' +
-        '<button type="button" onclick="testarEvoAPI()" style="padding:8px 14px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--gray2);font-size:.81rem;cursor:pointer;font-family:inherit">Testar conexao</button>' +
-      '</div>' +
-      '<div id="evoResult" style="margin-top:9px;font-size:.77rem;display:none"></div>';
-    return panel;
-  }
-
-  function ensureEvolutionConfigPanel() {
-    var panel = byId('wa-panel-evo');
-    if (!panel) return false;
-
-    var grid = firstDirectGrid(panel);
-    var urlEl = byId('waEvoUrl') || byId('waEvoUrl2');
-    var configPanel = (urlEl && nearestPanelChild(urlEl, panel, grid)) || byId('waEvoConfigBloco');
-    var qrBox = byId('waQrBox');
-    var qrColumn = qrBox && nearestPanelChild(qrBox, panel, grid);
-
-    if (!grid) {
-      grid = document.createElement('div');
-      grid.className = 'r2r-wa-evo-grid';
-      if (qrColumn) grid.appendChild(qrColumn);
-      panel.appendChild(grid);
-    }
-
-    if (grid.classList) grid.classList.add('r2r-wa-evo-grid');
-    grid.style.display = 'grid';
-    grid.style.gridTemplateColumns = 'minmax(210px,240px) minmax(280px,1fr)';
-    grid.style.gap = '20px';
-    grid.style.alignItems = 'start';
-    grid.style.width = '100%';
-
-    Array.prototype.forEach.call(grid.children || [], function (child) {
-      makeVisible(child, '');
-    });
-
-    if (!configPanel || !configPanel.querySelector || !configPanel.querySelector('#waEvoUrl')) {
-      configPanel = buildEvolutionConfigPanel();
-      grid.appendChild(configPanel);
-    }
-
-    if (qrColumn && qrColumn.parentNode !== grid) {
-      grid.insertBefore(qrColumn, grid.firstChild || null);
-    }
-    if (configPanel.parentNode !== grid) {
-      grid.appendChild(configPanel);
-    }
-
-    configPanel.id = 'waEvoConfigBloco';
-    if (configPanel.classList) configPanel.classList.add('r2r-wa-config-column');
-    makeVisible(configPanel, 'block');
-    configPanel.style.gridColumn = '2';
-    configPanel.style.minWidth = '280px';
-    if (qrColumn) qrColumn.style.gridColumn = '1';
-
-    var node = configPanel.parentNode;
-    while (node && node !== panel.parentNode) {
-      if (node.style) {
-        node.hidden = false;
-        node.style.visibility = 'visible';
-        node.style.opacity = '1';
-        if (node !== panel && node.style.display === 'none') node.style.display = '';
-      }
-      if (node === panel) break;
-      node = node.parentNode;
-    }
-
-    var hint = byId('waEvoConfigHint');
-    if (!hint && configPanel.firstElementChild) {
-      hint = document.createElement('div');
-      hint.id = 'waEvoConfigHint';
-      hint.style.cssText = 'background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:11px;font-size:.75rem;color:var(--gray2);line-height:1.7;margin-bottom:12px';
-      hint.innerHTML = '<strong style="color:var(--text2)">Dados necessarios:</strong> URL publica da Evolution, API Key Global e nome da instancia.';
-      configPanel.insertBefore(hint, configPanel.children[1] || null);
-    }
-
-    var defaults = {
-      waEvoUrl: 'https://evolution.seudominio.com.br',
-      waEvoKey: 'Chave global da Evolution API',
-      waEvoInst: 'r2r-crm'
-    };
-    Object.keys(defaults).forEach(function (id) {
-      var el = byId(id);
-      if (!el) return;
-      makeVisible(el, '');
-      if (id === 'waEvoInst') el.value = normalizeInstanceName(el.value || 'r2r-crm');
-      if (!el.placeholder) el.placeholder = defaults[id];
-      el.autocomplete = id === 'waEvoKey' ? 'off' : 'on';
-    });
-
-    return true;
-  }
-
   function applyWATabButtonState(activeTab) {
     ['wtc', 'evo', 'meta'].forEach(function (tab) {
       var btn = byId('wa-tab-' + tab);
@@ -637,14 +524,12 @@
         card.appendChild(panel);
       }
     });
-    ensureEvolutionConfigPanel();
     return true;
   }
 
   window.switchWATab = function (tab) {
     tab = ['wtc', 'evo', 'meta'].indexOf(tab) >= 0 ? tab : 'evo';
     repairWhatsappPanels();
-    if (tab === 'evo') ensureEvolutionConfigPanel();
     ['wtc', 'evo', 'meta'].forEach(function (item) {
       var panel = byId('wa-panel-' + item);
       if (panel) panel.style.display = item === tab ? 'block' : 'none';
@@ -678,7 +563,6 @@
       };
     });
     applyWATabButtonState(activeTab);
-    if (activeTab === 'evo') ensureEvolutionConfigPanel();
   }
 
   async function loadWAConfig() {
@@ -753,9 +637,8 @@
       setQrBusy('Gerando QR Code...');
       var saved = await saveWAConfigIfNeeded(true);
       if (!saved) return;
-      var cfg = readWAConfigFromForm();
-      var data = await apiFetch('/api/whatsapp/connect', { method: 'POST', body: JSON.stringify({ instance: cfg.instance }) });
-      var qr = data.qr || data.qrcode || data.qrCode || data.base64 || data.data;
+      var data = await apiFetch('/api/whatsapp/connect', { method: 'POST', body: JSON.stringify({}) });
+      var qr = data.qr || data.qrcode || data.base64 || data.data;
       if (!data.configured) {
         setQrMessage(data.message || 'WhatsApp nao configurado no backend.', 'error');
         toast(data.message || 'WhatsApp nao configurado.', 'warn');
@@ -871,8 +754,6 @@
     clearFrontendSecrets();
     wireWhatsappTabs();
     setTimeout(wireWhatsappTabs, 800);
-    setTimeout(function () { wireWhatsappTabs(); ensureEvolutionConfigPanel(); }, 1800);
-    setTimeout(function () { wireWhatsappTabs(); ensureEvolutionConfigPanel(); }, 3600);
     await loadRuntimeConfig();
     window.R2R_BACKEND_READY = await backendReady();
     if (window.R2R_BACKEND_READY) console.log('[R2R] Backend bridge ativo');

@@ -200,6 +200,8 @@ curl https://api.r2rmarketingdigital.com.br/api/config
 
 As duas rotas precisam retornar JSON do backend. Se retornarem `502 Gateway Incorreto`, o backend Node esta fora do ar no EasyPanel ou a porta/start command esta incorreta. Se `https://crm.r2rmarketingdigital.com.br/api/health` retornar `index.html`, o frontend esta tentando usar o dominio estatico como API; publique `frontend-public_html/config.js` atualizado ou limpe `localStorage.r2r_api_base` no navegador.
 
+Para Evolution, a URL deve existir publicamente e com protocolo, por exemplo `https://evolution.seudominio.com.br`. Se o dominio do EasyPanel nao resolver DNS, o backend nao consegue gerar QR Code. A tela normaliza URL digitada sem `https://`, mas o dominio ainda precisa estar online.
+
 ## 7. Comandos de validacao
 
 Em ambiente com Node.js 18+:

@@ -84,6 +84,10 @@ Data da entrega: 2026-07-04
 - Atualizado `.env.example` com variaveis de deploy, Supabase, JWT futuro e Evolution API.
 - Ajustado `frontend-public_html/config.js` para apontar a API publica para `https://api.r2rmarketingdigital.com.br`.
 - Documentado diagnostico para quando `/api/health` retorna HTML ou a API retorna 502.
+- Adicionada deteccao no frontend para rejeitar `/api/*` quando o dominio estatico devolve HTML em vez de JSON.
+- Adicionado fallback automatico do frontend para `https://api.r2rmarketingdigital.com.br` quando o CRM roda em `https://crm.r2rmarketingdigital.com.br`.
+- Normalizada URL da Evolution sem protocolo, convertendo `evolution.dominio.com` para `https://evolution.dominio.com`.
+- Melhoradas mensagens quando a Evolution API esta inacessivel ou o dominio nao resolve no EasyPanel.
 - Atualizado `Dockerfile` para expor a porta 3000.
 - Reescritos testes para cobrir servidor HTTP, health, login, rotas protegidas, aliases, upload, webhook Evolution e Evolution sem configuracao.
 

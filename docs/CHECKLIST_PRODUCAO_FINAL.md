@@ -60,12 +60,14 @@
 
 - [ ] Evolution API online.
 - [ ] `EVOLUTION_API_URL` configurado no backend.
+- [ ] `EVOLUTION_API_URL` com protocolo `https://` e dominio resolvendo DNS.
 - [ ] `EVOLUTION_API_KEY` configurado no backend.
 - [ ] `EVOLUTION_INSTANCE_NAME` definido.
 - [ ] `EVOLUTION_WEBHOOK_SECRET` definido ou API key interna configurada para webhook.
 - [ ] `EVOLUTION_WEBHOOK_EMPRESA_ID` definido quando a instancia nao estiver salva em `integracoes`.
 - [ ] `/api/integrations/evolution/status` responde.
 - [ ] `/api/integrations/evolution/connect` gera QR Code ou erro amigavel.
+- [ ] URL publica da Evolution testada fora do CRM; erro de DNS/host invalido precisa ser corrigido no EasyPanel antes do QR Code.
 - [ ] `/api/webhooks/evolution` recebe mensagem de teste e grava `conversas`, `mensagens` e `webhooks_logs`.
 - [ ] WhatsApp escaneia o QR Code.
 - [ ] Status muda para conectado.
