@@ -9,6 +9,8 @@
 - [ ] Registro correspondente existe em `public.usuarios`.
 - [ ] RLS habilitado nas tabelas operacionais.
 - [ ] View `public.dashboard_resumo` criada com `security_invoker`.
+- [ ] Views `public.contatos`, `public.atendimentos` e `public.logs` criadas com `security_invoker`.
+- [ ] Policies de escrita validam perfil ativo e policies administrativas exigem admin/gestor/super_admin.
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` fica somente no backend.
 - [ ] Chave publica fica somente em `config.js` quando necessaria.
 
@@ -19,6 +21,9 @@
 - [ ] `.env` criado a partir de `.env.example`.
 - [ ] `NODE_ENV=production`.
 - [ ] `PORT=3000` ou porta definida pelo provedor.
+- [ ] Dominio de API aponta para o backend Node: `https://api.r2rmarketingdigital.com.br`.
+- [ ] `https://api.r2rmarketingdigital.com.br/health` retorna JSON, nao HTML nem 502.
+- [ ] O dominio do frontend `https://crm.r2rmarketingdigital.com.br` nao deve responder `/api/*` com `index.html`.
 - [ ] `SUPABASE_URL` configurado.
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` configurado no backend.
 - [ ] `CORS_ORIGIN` aponta para o dominio real do frontend.
@@ -27,15 +32,20 @@
 - [ ] `/api/me` retorna perfil e `empresa_id`.
 - [ ] `/api/leads` retorna somente dados da empresa do usuario.
 - [ ] `/api/contacts` responde.
+- [ ] `/api/contatos` responde.
+- [ ] `/api/atendimentos` responde.
 - [ ] `/api/messages` responde.
 - [ ] `/api/reports/dashboard` responde.
+- [ ] `/api/files/upload` valida tipo/tamanho e cria registro em `arquivos`.
+- [ ] `/api/google/status` responde com configuracao atual.
 - [ ] Logs nao exibem segredos.
 - [ ] `ALLOW_DEMO_AUTH=false` em producao.
 
 ## Frontend
 
 - [ ] Arquivos de `frontend-public_html` enviados para `public_html`.
-- [ ] `config.js` aponta para a URL publica do backend.
+- [ ] `config.js` aponta para `https://api.r2rmarketingdigital.com.br`.
+- [ ] Limpar `localStorage.r2r_api_base` no navegador se ele ficou salvo como `https://crm.r2rmarketingdigital.com.br`.
 - [ ] `index.html` carrega sem tela quebrada.
 - [ ] `checkBackendHealth()` retorna backend online.
 - [ ] Login abre o painel do CRM.
@@ -51,9 +61,12 @@
 - [ ] Evolution API online.
 - [ ] `EVOLUTION_API_URL` configurado no backend.
 - [ ] `EVOLUTION_API_KEY` configurado no backend.
-- [ ] `EVOLUTION_INSTANCE` definido.
+- [ ] `EVOLUTION_INSTANCE_NAME` definido.
+- [ ] `EVOLUTION_WEBHOOK_SECRET` definido ou API key interna configurada para webhook.
+- [ ] `EVOLUTION_WEBHOOK_EMPRESA_ID` definido quando a instancia nao estiver salva em `integracoes`.
 - [ ] `/api/integrations/evolution/status` responde.
 - [ ] `/api/integrations/evolution/connect` gera QR Code ou erro amigavel.
+- [ ] `/api/webhooks/evolution` recebe mensagem de teste e grava `conversas`, `mensagens` e `webhooks_logs`.
 - [ ] WhatsApp escaneia o QR Code.
 - [ ] Status muda para conectado.
 - [ ] Envio de mensagem testado por `/api/messages/send`.
@@ -78,6 +91,10 @@
 - [ ] Listagem de contatos testada.
 - [ ] Painel de integracoes testado.
 - [ ] QR Code testado.
+- [ ] Upload de arquivo permitido testado.
+- [ ] Webhook Evolution testado.
+- [ ] OpenAI testado por `/api/ai/test` quando `OPENAI_API_KEY` existir.
+- [ ] Meta/Google permanecem sem credenciais no frontend.
 - [ ] Logout testado.
 - [ ] 404 retorna JSON amigavel.
 - [ ] Erros 500 nao vazam stack trace em producao.

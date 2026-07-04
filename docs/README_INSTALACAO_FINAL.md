@@ -57,6 +57,8 @@ APP_URL=https://api.seudominio.com.br
 FRONTEND_URL=https://crm.seudominio.com.br
 PUBLIC_URL=https://api.seudominio.com.br
 CORS_ORIGIN=https://crm.seudominio.com.br
+UPLOAD_DIR=.data/uploads
+UPLOAD_MAX_BYTES=10000000
 
 SUPABASE_URL=https://SEU-PROJETO.supabase.co
 SUPABASE_ANON_KEY=
@@ -65,7 +67,24 @@ SUPABASE_SERVICE_ROLE_KEY=
 
 EVOLUTION_API_URL=https://evolution.seudominio.com.br
 EVOLUTION_API_KEY=
-EVOLUTION_INSTANCE=r2r-crm
+EVOLUTION_INSTANCE_NAME=r2r-crm
+EVOLUTION_WEBHOOK_SECRET=
+EVOLUTION_WEBHOOK_EMPRESA_ID=
+
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o-mini
+
+META_APP_ID=
+META_APP_SECRET=
+META_REDIRECT_URI=https://api.seudominio.com.br/api/meta/oauth/callback
+META_ACCESS_TOKEN=
+META_AD_ACCOUNT_ID=act_000000000000000
+
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=https://api.seudominio.com.br/api/google/oauth/callback
+GOOGLE_DEVELOPER_TOKEN=
+GOOGLE_CUSTOMER_ID=
 ```
 
 Teste:
@@ -136,7 +155,9 @@ No backend `.env`:
 ```env
 EVOLUTION_API_URL=https://evolution.seudominio.com.br
 EVOLUTION_API_KEY=sua-chave-global
-EVOLUTION_INSTANCE=r2r-crm
+EVOLUTION_INSTANCE_NAME=r2r-crm
+EVOLUTION_WEBHOOK_SECRET=um-segredo-longo
+EVOLUTION_WEBHOOK_EMPRESA_ID=uuid-da-empresa
 ```
 
 No CRM:
@@ -161,6 +182,24 @@ Se a Evolution nao estiver configurada, a API retorna erro amigavel:
 }
 ```
 
+Webhook Evolution recomendado:
+
+- URL: `https://api.seudominio.com.br/api/webhooks/evolution`
+- Header: `x-evolution-secret: valor-de-EVOLUTION_WEBHOOK_SECRET`
+- Alternativa: enviar `x-api-key` gerada no CRM para vincular o webhook a uma empresa.
+- O backend deduplica por `external_id` e salva dados em `conversas`, `mensagens` e `webhooks_logs`.
+
+### Diagnostico do erro "Nao configurado" no WhatsApp
+
+Se a tela mostrar "Preencha a URL da Evolution API e a API Key Global antes de conectar", valide primeiro o backend:
+
+```bash
+curl https://api.r2rmarketingdigital.com.br/health
+curl https://api.r2rmarketingdigital.com.br/api/config
+```
+
+As duas rotas precisam retornar JSON do backend. Se retornarem `502 Gateway Incorreto`, o backend Node esta fora do ar no EasyPanel ou a porta/start command esta incorreta. Se `https://crm.r2rmarketingdigital.com.br/api/health` retornar `index.html`, o frontend esta tentando usar o dominio estatico como API; publique `frontend-public_html/config.js` atualizado ou limpe `localStorage.r2r_api_base` no navegador.
+
 ## 7. Comandos de validacao
 
 Em ambiente com Node.js 18+:
@@ -178,10 +217,15 @@ Rotas importantes:
 - `GET /api/me`
 - `GET /api/leads`
 - `GET /api/contacts`
+- `GET /api/contatos`
+- `GET /api/atendimentos`
 - `GET /api/integrations/evolution/status`
 - `POST /api/integrations/evolution/connect`
 - `GET /api/integrations/evolution/qrcode`
 - `POST /api/messages/send`
+- `POST /api/webhooks/evolution`
+- `POST /api/files/upload`
+- `GET /api/google/status`
 - `GET /api/reports/dashboard`
 
 ## 8. Onde importar cada parte

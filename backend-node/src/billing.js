@@ -29,9 +29,13 @@ const BILLING_PLANS = {
 };
 
 function normalizePlanId(value) {
-  const v = String(value || '').trim().toLowerCase();
-  if (['starter', 'start', 'inicial', 'basico', 'básico'].includes(v)) return 'starter';
-  if (['business', 'busines', 'negocios', 'negócios', 'profissional'].includes(v)) return 'business';
+  const v = String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (['starter', 'start', 'inicial', 'basico'].includes(v)) return 'starter';
+  if (['business', 'busines', 'negocios', 'profissional'].includes(v)) return 'business';
   if (['premium', 'enterprise', 'ilimitado'].includes(v)) return 'premium';
   return null;
 }

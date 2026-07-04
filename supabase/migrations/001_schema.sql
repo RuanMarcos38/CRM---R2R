@@ -61,7 +61,7 @@ create table if not exists public.usuarios (
   email text not null,
   telefone text,
   funcao text,
-  tipo_usuario text not null default 'usuario' check (tipo_usuario in ('super_admin','admin','gestor','vendedor','atendente','financeiro','usuario','limitado','visualizador')),
+  tipo_usuario text not null default 'usuario' check (tipo_usuario in ('super_admin','admin','administrador','gestor','vendedor','comercial','atendente','financeiro','usuario','usuario_comum','limitado','visualizador')),
   status text not null default 'ativo' check (status in ('ativo','inativo','bloqueado','pendente')),
   permissoes jsonb not null default '{}'::jsonb,
   ultimo_acesso timestamptz,
@@ -69,6 +69,10 @@ create table if not exists public.usuarios (
   updated_at timestamptz not null default now(),
   unique (empresa_id, email)
 );
+
+alter table public.usuarios drop constraint if exists usuarios_tipo_usuario_check;
+alter table public.usuarios add constraint usuarios_tipo_usuario_check
+  check (tipo_usuario in ('super_admin','admin','administrador','gestor','vendedor','comercial','atendente','financeiro','usuario','usuario_comum','limitado','visualizador'));
 
 create table if not exists public.assinaturas (
   id uuid primary key default gen_random_uuid(),
@@ -595,10 +599,60 @@ as $$
     );
 $$;
 
+create or replace function app_private.has_empresa_role(target_empresa_id uuid, allowed_roles text[])
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select app_private.is_super_admin()
+    or exists (
+      select 1
+      from public.usuarios u
+      where u.auth_user_id = (select auth.uid())
+        and u.status = 'ativo'
+        and u.empresa_id = target_empresa_id
+        and u.tipo_usuario = any(allowed_roles)
+    );
+$$;
+
+create or replace function app_private.can_write_empresa(target_empresa_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select app_private.has_empresa_role(
+    target_empresa_id,
+    array['admin','administrador','gestor','vendedor','comercial','atendente','financeiro','usuario','usuario_comum']
+  );
+$$;
+
+create or replace function app_private.is_empresa_admin(target_empresa_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select app_private.has_empresa_role(
+    target_empresa_id,
+    array['admin','administrador','gestor']
+  );
+$$;
+
 revoke all on function app_private.is_super_admin() from public;
 revoke all on function app_private.has_empresa_access(uuid) from public;
-grant execute on function app_private.is_super_admin() to authenticated;
-grant execute on function app_private.has_empresa_access(uuid) to authenticated;
+revoke all on function app_private.has_empresa_role(uuid, text[]) from public;
+revoke all on function app_private.can_write_empresa(uuid) from public;
+revoke all on function app_private.is_empresa_admin(uuid) from public;
+grant execute on function app_private.is_super_admin() to authenticated, service_role;
+grant execute on function app_private.has_empresa_access(uuid) to authenticated, service_role;
+grant execute on function app_private.has_empresa_role(uuid, text[]) to authenticated, service_role;
+grant execute on function app_private.can_write_empresa(uuid) to authenticated, service_role;
+grant execute on function app_private.is_empresa_admin(uuid) to authenticated, service_role;
 
 do $$
 declare
@@ -637,8 +691,18 @@ using (app_private.has_empresa_access(id));
 drop policy if exists "empresas_admin_update" on public.empresas;
 create policy "empresas_admin_update" on public.empresas
 for update to authenticated
-using (app_private.has_empresa_access(id))
-with check (app_private.has_empresa_access(id));
+using (app_private.is_empresa_admin(id))
+with check (app_private.is_empresa_admin(id));
+
+drop policy if exists "empresas_super_admin_insert" on public.empresas;
+create policy "empresas_super_admin_insert" on public.empresas
+for insert to authenticated
+with check (app_private.is_super_admin());
+
+drop policy if exists "empresas_super_admin_delete" on public.empresas;
+create policy "empresas_super_admin_delete" on public.empresas
+for delete to authenticated
+using (app_private.is_super_admin());
 
 drop policy if exists "usuarios_select" on public.usuarios;
 create policy "usuarios_select" on public.usuarios
@@ -648,23 +712,26 @@ using (app_private.has_empresa_access(empresa_id) or auth_user_id = (select auth
 drop policy if exists "usuarios_insert_admin" on public.usuarios;
 create policy "usuarios_insert_admin" on public.usuarios
 for insert to authenticated
-with check (app_private.has_empresa_access(empresa_id));
+with check (app_private.is_empresa_admin(empresa_id));
 
 drop policy if exists "usuarios_update_admin" on public.usuarios;
 create policy "usuarios_update_admin" on public.usuarios
 for update to authenticated
-using (app_private.has_empresa_access(empresa_id))
-with check (app_private.has_empresa_access(empresa_id));
+using (app_private.is_empresa_admin(empresa_id))
+with check (app_private.is_empresa_admin(empresa_id));
+
+drop policy if exists "usuarios_delete_admin" on public.usuarios;
+create policy "usuarios_delete_admin" on public.usuarios
+for delete to authenticated
+using (app_private.is_empresa_admin(empresa_id));
 
 do $$
 declare
   t text;
 begin
   foreach t in array array[
-    'assinaturas','funis','funil_etapas','leads','clientes','oportunidades','atividades','tarefas',
-    'conversas','mensagens','campanhas','fontes_lead','configuracoes','integracoes','automacoes',
-    'automacao_regras','arquivos','tags','lead_tags','notificacoes','webhooks_logs','audit_logs',
-    'api_keys','permissoes','ia_agentes','campos_personalizados'
+    'leads','clientes','oportunidades','atividades','tarefas','conversas','mensagens',
+    'campanhas','fontes_lead','arquivos','tags','lead_tags','notificacoes'
   ]
   loop
     execute format('drop policy if exists tenant_select on public.%I', t);
@@ -672,9 +739,25 @@ begin
     execute format('drop policy if exists tenant_update on public.%I', t);
     execute format('drop policy if exists tenant_delete on public.%I', t);
     execute format('create policy tenant_select on public.%I for select to authenticated using (app_private.has_empresa_access(empresa_id))', t);
-    execute format('create policy tenant_insert on public.%I for insert to authenticated with check (app_private.has_empresa_access(empresa_id))', t);
-    execute format('create policy tenant_update on public.%I for update to authenticated using (app_private.has_empresa_access(empresa_id)) with check (app_private.has_empresa_access(empresa_id))', t);
-    execute format('create policy tenant_delete on public.%I for delete to authenticated using (app_private.has_empresa_access(empresa_id))', t);
+    execute format('create policy tenant_insert on public.%I for insert to authenticated with check (app_private.can_write_empresa(empresa_id))', t);
+    execute format('create policy tenant_update on public.%I for update to authenticated using (app_private.can_write_empresa(empresa_id)) with check (app_private.can_write_empresa(empresa_id))', t);
+    execute format('create policy tenant_delete on public.%I for delete to authenticated using (app_private.can_write_empresa(empresa_id))', t);
+  end loop;
+
+  foreach t in array array[
+    'assinaturas','funis','funil_etapas','configuracoes','integracoes','automacoes',
+    'automacao_regras','webhooks_logs','audit_logs','api_keys','permissoes','ia_agentes',
+    'campos_personalizados'
+  ]
+  loop
+    execute format('drop policy if exists tenant_select on public.%I', t);
+    execute format('drop policy if exists tenant_insert on public.%I', t);
+    execute format('drop policy if exists tenant_update on public.%I', t);
+    execute format('drop policy if exists tenant_delete on public.%I', t);
+    execute format('create policy tenant_select on public.%I for select to authenticated using (app_private.has_empresa_access(empresa_id))', t);
+    execute format('create policy tenant_insert on public.%I for insert to authenticated with check (app_private.is_empresa_admin(empresa_id))', t);
+    execute format('create policy tenant_update on public.%I for update to authenticated using (app_private.is_empresa_admin(empresa_id)) with check (app_private.is_empresa_admin(empresa_id))', t);
+    execute format('create policy tenant_delete on public.%I for delete to authenticated using (app_private.is_empresa_admin(empresa_id))', t);
   end loop;
 end $$;
 
@@ -684,11 +767,11 @@ for all to authenticated
 using (app_private.is_super_admin())
 with check (app_private.is_super_admin());
 
-grant usage on schema public to anon, authenticated;
-grant select on public.planos to anon, authenticated;
-grant select on public.templates_nicho to authenticated;
-grant select, insert, update, delete on all tables in schema public to authenticated;
-grant usage, select on all sequences in schema public to authenticated;
+grant usage on schema public to anon, authenticated, service_role;
+grant select on public.planos to anon, authenticated, service_role;
+grant select on public.templates_nicho to authenticated, service_role;
+grant select, insert, update, delete on all tables in schema public to authenticated, service_role;
+grant usage, select on all sequences in schema public to authenticated, service_role;
 
 do $$
 declare
@@ -717,7 +800,9 @@ create index if not exists idx_oportunidades_empresa_status on public.oportunida
 create index if not exists idx_oportunidades_fechamento on public.oportunidades(empresa_id, data_prevista_fechamento);
 create index if not exists idx_tarefas_empresa_prazo on public.tarefas(empresa_id, prazo);
 create index if not exists idx_conversas_empresa_status on public.conversas(empresa_id, status);
+create index if not exists idx_conversas_empresa_external on public.conversas(empresa_id, external_id);
 create index if not exists idx_mensagens_conversa_created on public.mensagens(conversa_id, created_at);
+create unique index if not exists idx_mensagens_empresa_external_unique on public.mensagens(empresa_id, external_id) where external_id is not null;
 create index if not exists idx_campanhas_empresa_status on public.campanhas(empresa_id, status);
 create index if not exists idx_integracoes_empresa_tipo on public.integracoes(empresa_id, tipo);
 create index if not exists idx_audit_empresa_created on public.audit_logs(empresa_id, created_at desc);
@@ -739,4 +824,22 @@ select
   now() as atualizado_em
 from public.empresas e;
 
-grant select on public.dashboard_resumo to authenticated;
+create or replace view public.contatos
+with (security_invoker = true)
+as
+select * from public.clientes;
+
+create or replace view public.atendimentos
+with (security_invoker = true)
+as
+select * from public.conversas;
+
+create or replace view public.logs
+with (security_invoker = true)
+as
+select * from public.audit_logs;
+
+grant select on public.dashboard_resumo to authenticated, service_role;
+grant select on public.contatos to authenticated, service_role;
+grant select on public.atendimentos to authenticated, service_role;
+grant select on public.logs to authenticated, service_role;

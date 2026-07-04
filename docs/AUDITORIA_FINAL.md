@@ -1,6 +1,6 @@
 # Auditoria Final - R2R CRM SaaS
 
-Data da entrega: 2026-07-02
+Data da entrega: 2026-07-04
 
 ## Versao oficial
 
@@ -21,6 +21,14 @@ Data da entrega: 2026-07-02
 - A resposta do QR Code nao estava padronizada com `qrCode`, `status`, `instance` e `success`.
 - O schema SQL tinha as tabelas centrais, RLS e indices, mas nao tinha uma view de dashboard explicita para relatorios.
 - Os testes eram apenas unitarios e nao subiam o servidor para validar rotas reais.
+- O backend carregava `.env` tarde demais para modulos que liam variaveis no carregamento.
+- Updates/deletes via Supabase podiam retornar sucesso sem registro alterado quando o PostgREST devolvia lista vazia.
+- As policies antigas permitiam escrita ampla demais para qualquer usuario autenticado dentro do tenant.
+- Faltavam aliases operacionais para `contatos`, `atendimentos` e `logs`.
+- Faltavam variaveis de Google Ads/OAuth, Meta OAuth, Evolution webhook, upload e `EVOLUTION_INSTANCE_NAME`.
+- Em producao, `https://crm.r2rmarketingdigital.com.br/api/health` e `/api/config` estavam retornando `index.html`, nao JSON do backend.
+- O subdominio `https://api.r2rmarketingdigital.com.br` existia no DNS, mas respondia `502 Gateway Incorreto`, indicando backend fora do ar ou proxy EasyPanel incorreto.
+- O `config.js` publico estava sem `R2R_API_BASE`, deixando o frontend salvar/usar o dominio estatico como se fosse API.
 
 ## Correcoes aplicadas
 
@@ -64,9 +72,20 @@ Data da entrega: 2026-07-02
 - Adicionado login via Supabase Auth quando `SUPABASE_URL` e chave publica estao configuradas.
 - Mantido modo demo local apenas fora de producao ou quando `ALLOW_DEMO_AUTH=true`.
 - Adicionada view `public.dashboard_resumo` com `security_invoker = true`.
+- Adicionadas views `public.contatos`, `public.atendimentos` e `public.logs` com `security_invoker = true`.
+- Endurecidas policies RLS com `app_private.can_write_empresa` e `app_private.is_empresa_admin`.
+- Adicionados grants explicitos para `service_role`, necessario em projetos Supabase novos com exposicao de Data API opt-in.
+- Adicionados indices para conversas por `external_id` e deduplicacao de mensagens do webhook.
+- Adicionado upload JSON/Base64 validado por MIME, tamanho, path seguro e registro em `arquivos`.
+- Adicionado webhook Evolution em `/api/webhooks/evolution`, com segredo ou API key interna e persistencia em `conversas`, `mensagens` e `webhooks_logs`.
+- Adicionados aliases REST `/api/contatos`, `/api/atendimentos` e `/api/logs`.
+- Adicionado status de Google em `/api/google/status` para estrutura futura de OAuth/Ads.
+- Ajustado `EVOLUTION_INSTANCE_NAME` como nome preferencial, mantendo `EVOLUTION_INSTANCE` como alias legado.
 - Atualizado `.env.example` com variaveis de deploy, Supabase, JWT futuro e Evolution API.
+- Ajustado `frontend-public_html/config.js` para apontar a API publica para `https://api.r2rmarketingdigital.com.br`.
+- Documentado diagnostico para quando `/api/health` retorna HTML ou a API retorna 502.
 - Atualizado `Dockerfile` para expor a porta 3000.
-- Reescritos testes para cobrir servidor HTTP, health, login, rotas protegidas, aliases e Evolution sem configuracao.
+- Reescritos testes para cobrir servidor HTTP, health, login, rotas protegidas, aliases, upload, webhook Evolution e Evolution sem configuracao.
 
 ## Decisoes tecnicas
 
@@ -76,6 +95,7 @@ Data da entrega: 2026-07-02
 - Segredos da Evolution, Meta, OpenAI e N8N devem ficar no backend, nunca no frontend.
 - O banco usa `clientes` como tabela oficial para contatos/clientes; o backend oferece alias REST `/api/contacts`.
 - O banco usa `mensagens` como tabela oficial; o backend oferece alias REST `/api/messages`.
+- Integrações Meta/Google ficam estruturadas por variaveis de ambiente; credenciais reais continuam fora do repositorio.
 
 ## Pendencias externas
 

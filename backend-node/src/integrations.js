@@ -1,47 +1,26 @@
-const QRCode = require('qrcode');
 const { cleanUrl } = require('./http');
 
-function normalizeInstanceName(value) {
-  const normalized = String(value || 'r2r-crm')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64);
-  return normalized || 'r2r-crm';
+function envFirst(keys) {
+  for (const key of keys) {
+    const value = String(process.env[key] || '').trim();
+    if (value) return value;
+  }
+  return '';
 }
 
-function statusIsConnected(status) {
-  return ['open', 'connected'].includes(String(status || '').toLowerCase());
+function fetchTimeoutMs() {
+  const value = Number(process.env.INTEGRATION_TIMEOUT_MS || 20_000);
+  return Number.isFinite(value) && value > 0 ? value : 20_000;
 }
 
-function possibleInstanceNames(item = {}) {
-  return [
-    item.name,
-    item.instanceName,
-    item.id,
-    item.instance && item.instance.instanceName,
-    item.instance && item.instance.name,
-    item.instance && item.instance.id
-  ].filter(Boolean).map(value => String(value).toLowerCase());
-}
-
-function connectionStatus(item = {}) {
-  return item.connectionStatus ||
-    item.status ||
-    item.state ||
-    item.instance && (item.instance.connectionStatus || item.instance.status || item.instance.state) ||
-    'not_found';
-}
-
-function instanceList(data) {
-  if (Array.isArray(data)) return data;
-  if (data && Array.isArray(data.data)) return data.data;
-  if (data && Array.isArray(data.response)) return data.response;
-  if (data && Array.isArray(data.instances)) return data.instances;
-  return [];
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs());
+  try {
+    return await fetch(url, { ...options, signal: options.signal || controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function integrationStatus() {
@@ -52,11 +31,18 @@ function integrationStatus() {
     },
     evolution: {
       configured: !!((process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL) && process.env.EVOLUTION_API_KEY),
-      instance: normalizeInstanceName(process.env.EVOLUTION_INSTANCE || 'r2r-crm')
+      instance: envFirst(['EVOLUTION_INSTANCE_NAME', 'EVOLUTION_INSTANCE']) || 'r2r-crm',
+      webhook_configured: !!process.env.EVOLUTION_WEBHOOK_SECRET
     },
     meta: {
       configured: !!process.env.META_ACCESS_TOKEN,
-      ad_account_configured: !!process.env.META_AD_ACCOUNT_ID
+      app_configured: !!(process.env.META_APP_ID && process.env.META_APP_SECRET && process.env.META_REDIRECT_URI),
+      ad_account_configured: !!process.env.META_AD_ACCOUNT_ID,
+      graph_version: process.env.META_GRAPH_VERSION || 'v20.0'
+    },
+    google: {
+      configured: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI),
+      ads_configured: !!(process.env.GOOGLE_DEVELOPER_TOKEN && process.env.GOOGLE_CUSTOMER_ID)
     },
     n8n: {
       configured: !!process.env.N8N_WEBHOOK_URL
@@ -89,15 +75,12 @@ function extractQr(value, seen = new Set()) {
   if (typeof value !== 'object' || seen.has(value)) return null;
   seen.add(value);
 
-  const priority = ['base64', 'base64Image', 'qrcode', 'qrCode', 'qr', 'image'];
+  const priority = ['base64', 'qrcode', 'qrCode', 'qr', 'image'];
   for (const key of priority) {
     if (Object.prototype.hasOwnProperty.call(value, key)) {
       const found = extractQr(value[key], seen);
       if (found) return found;
-      if (typeof value[key] === 'string' && key.toLowerCase().includes('qr')) {
-        const text = value[key].trim();
-        if (text.startsWith('data:image/') || /^(iVBOR|\/9j\/|R0lGOD|PHN2Z)/.test(text)) return text;
-      }
+      if (typeof value[key] === 'string' && key.toLowerCase().includes('qr')) return value[key].trim() || null;
     }
   }
 
@@ -112,36 +95,6 @@ function extractQr(value, seen = new Set()) {
   for (const item of Object.values(value)) {
     const found = extractQr(item, seen);
     if (found) return found;
-  }
-  return null;
-}
-
-function looksLikeQrPayload(value) {
-  const text = String(value || '').trim();
-  if (text.length < 32) return false;
-  if (text.startsWith('data:image/')) return false;
-  if (/^(iVBOR|\/9j\/|R0lGOD|PHN2Z)/.test(text)) return false;
-  if (/^https?:\/\//i.test(text)) return false;
-  return true;
-}
-
-function extractQrPayload(value, seen = new Set()) {
-  if (!value) return null;
-  if (typeof value === 'string') return looksLikeQrPayload(value) ? value.trim() : null;
-  if (typeof value !== 'object' || seen.has(value)) return null;
-  seen.add(value);
-
-  for (const [key, item] of Object.entries(value)) {
-    const normalized = key.toLowerCase().replace(/[_-]/g, '');
-    if (['code', 'qrcode', 'qrcodestring', 'qrstring', 'qrtext'].includes(normalized) && typeof item === 'string') {
-      const payload = extractQrPayload(item, seen);
-      if (payload) return payload;
-    }
-  }
-
-  for (const item of Object.values(value)) {
-    const payload = extractQrPayload(item, seen);
-    if (payload) return payload;
   }
   return null;
 }
@@ -162,24 +115,15 @@ function extractPairingCode(value, seen = new Set()) {
   return null;
 }
 
-async function normalizeQrDataUrl(value) {
+function normalizeQrDataUrl(value) {
   const qr = extractQr(value);
-  if (qr) {
-    if (String(qr).startsWith('data:image/')) return qr;
-    return `data:image/png;base64,${qr}`;
-  }
-
-  const payload = extractQrPayload(value);
-  if (!payload) return null;
-  return QRCode.toDataURL(payload, {
-    errorCorrectionLevel: 'M',
-    margin: 1,
-    width: 260
-  });
+  if (!qr) return null;
+  if (String(qr).startsWith('data:image/')) return qr;
+  return `data:image/png;base64,${qr}`;
 }
 
 async function evolutionHttp(cfg, pathname, method = 'GET', body) {
-  const response = await fetch(cfg.url + pathname, {
+  const response = await fetchWithTimeout(cfg.url + pathname, {
     method,
     headers: { 'Content-Type': 'application/json', apikey: cfg.key },
     body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body || {})
@@ -205,13 +149,21 @@ async function openAIChat(message, history = [], ctx = {}) {
     'Use contexto de funil, origem, score e historico quando estiver disponivel.'
   ].join(' ');
 
+  const safeHistory = (Array.isArray(history) ? history : [])
+    .slice(-12)
+    .map(item => ({
+      role: ['system', 'user', 'assistant'].includes(item && item.role) ? item.role : 'user',
+      content: String(item && item.content || '').slice(0, 6000)
+    }))
+    .filter(item => item.content);
+
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...Array.isArray(history) ? history.slice(-12) : [],
+    ...safeHistory,
     { role: 'user', content: String(message || '') }
   ];
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify({
@@ -230,7 +182,7 @@ function evolutionConfig() {
   return {
     url: cleanUrl(process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || ''),
     key: process.env.EVOLUTION_API_KEY || '',
-    instance: normalizeInstanceName(process.env.EVOLUTION_INSTANCE || 'r2r-crm')
+    instance: envFirst(['EVOLUTION_INSTANCE_NAME', 'EVOLUTION_INSTANCE']) || 'r2r-crm'
   };
 }
 
@@ -238,7 +190,7 @@ function normalizeEvolutionConfig(config = {}) {
   return {
     url: cleanUrl(config.url || config.evolution_url || ''),
     key: config.key || config.apiKey || config.api_key || config.apikey || '',
-    instance: normalizeInstanceName(config.instance || config.inst || config.instanceName || 'r2r-crm')
+    instance: config.instance || config.inst || config.instanceName || 'r2r-crm'
   };
 }
 
@@ -262,20 +214,22 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
   }
 
   if (pathname === '/instance/fetchInstances') {
-    const response = await fetch(cfg.url + pathname, { headers: { apikey: cfg.key } });
+    const response = await fetchWithTimeout(cfg.url + pathname, { headers: { apikey: cfg.key } });
     const data = await readJsonResponse(response);
     if (!response.ok) return { ok: false, configured: true, status: 'error', error: data.message || `HTTP ${response.status}` };
-    const list = instanceList(data);
-    const wanted = String(cfg.instance).toLowerCase();
+    const list = Array.isArray(data) ? data : [];
     const found = list.find(item =>
-      possibleInstanceNames(item).includes(wanted)
+      item.name === cfg.instance ||
+      item.instanceName === cfg.instance ||
+      item.id === cfg.instance ||
+      (item.instance && item.instance.instanceName === cfg.instance)
     );
-    const status = found ? connectionStatus(found) : 'not_found';
-    return { ok: true, success: true, configured: true, connected: statusIsConnected(status), status, instance: cfg.instance, data: found || null };
+    const status = found && (found.connectionStatus || found.status || found.state || (found.instance && found.instance.state)) || 'not_found';
+    return { ok: true, success: true, configured: true, connected: status === 'open', status, instance: cfg.instance, data: found || null };
   }
 
   if (pathname === '/instance/connect' && method === 'POST') {
-    const instance = normalizeInstanceName((body && body.instance) || cfg.instance);
+    const instance = (body && body.instance) || cfg.instance;
     const createPayload = { instanceName: instance, qrcode: true, integration: 'WHATSAPP-BAILEYS' };
     const attempts = [];
 
@@ -293,7 +247,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
     ];
 
     for (const attempt of attempts) {
-      const qr = await normalizeQrDataUrl(attempt.data);
+      const qr = normalizeQrDataUrl(attempt.data);
       if (attempt.response && attempt.response.ok && qr) {
         return { ok: true, success: true, configured: true, status: 'qrcode', instance, qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(attempt.data), route: attempt.route, raw: attempt.data, data: attempt.data };
       }
@@ -302,7 +256,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
     for (const item of connectPaths) {
       try {
         const out = await evolutionHttp(cfg, item.route, item.method, { instanceName: instance, instance });
-        const qr = await normalizeQrDataUrl(out.data);
+        const qr = normalizeQrDataUrl(out.data);
         const pairingCode = extractPairingCode(out.data);
         attempts.push({ route: item.route, method: item.method, status: out.response.status, ok: out.response.ok, data: out.data });
         if (out.response.ok && qr) {
@@ -338,7 +292,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
 
   const { response, data } = await evolutionHttp(cfg, path, method, body);
   if (!response.ok) return { ok: false, success: false, configured: true, status: 'error', error: data.message || data.error || `HTTP ${response.status}`, raw: data };
-  const qr = await normalizeQrDataUrl(data);
+  const qr = normalizeQrDataUrl(data);
   return { ok: true, success: true, configured: true, status: qr ? 'qrcode' : 'ok', qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(data), raw: data, data };
 }
 
@@ -346,10 +300,22 @@ async function metaRequest(pathname) {
   const token = process.env.META_ACCESS_TOKEN;
   if (!token) return { ok: true, configured: false, data: null, message: 'META_ACCESS_TOKEN nao configurado.' };
   const separator = pathname.includes('?') ? '&' : '?';
-  const response = await fetch(`https://graph.facebook.com/v20.0${pathname}${separator}access_token=${encodeURIComponent(token)}`);
+  const version = String(process.env.META_GRAPH_VERSION || 'v20.0').replace(/^\/+/, '');
+  const response = await fetchWithTimeout(`https://graph.facebook.com/${version}${pathname}${separator}access_token=${encodeURIComponent(token)}`);
   const data = await readJsonResponse(response);
   if (!response.ok) return { ok: false, configured: true, error: data.error && data.error.message || `HTTP ${response.status}`, raw: data };
   return { ok: true, configured: true, data: data.data || data };
 }
 
-module.exports = { integrationStatus, openAIChat, evolutionConfig, normalizeEvolutionConfig, normalizeInstanceName, evolutionRequest, metaRequest };
+function googleStatus() {
+  const oauthConfigured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI);
+  return {
+    ok: true,
+    configured: oauthConfigured,
+    ads_configured: !!(process.env.GOOGLE_DEVELOPER_TOKEN && process.env.GOOGLE_CUSTOMER_ID),
+    redirect_uri: process.env.GOOGLE_REDIRECT_URI || '',
+    message: oauthConfigured ? 'Google OAuth configurado no backend.' : 'Configure GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET e GOOGLE_REDIRECT_URI no backend.'
+  };
+}
+
+module.exports = { integrationStatus, openAIChat, evolutionConfig, normalizeEvolutionConfig, evolutionRequest, metaRequest, googleStatus };

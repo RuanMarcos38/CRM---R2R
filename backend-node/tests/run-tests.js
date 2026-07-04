@@ -8,8 +8,12 @@ process.env.ALLOW_DEMO_AUTH = 'true';
 process.env.DEMO_USER_EMAIL = 'admin@demo.local';
 process.env.RATE_LIMIT_MAX = '0';
 process.env.DATA_DIR = path.join(__dirname, '.tmp-data');
+process.env.UPLOAD_DIR = path.join(__dirname, '.tmp-uploads');
+process.env.EVOLUTION_WEBHOOK_SECRET = 'test-secret';
+process.env.EVOLUTION_WEBHOOK_EMPRESA_ID = '00000000-0000-4000-8000-000000000001';
 
 fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+fs.rmSync(process.env.UPLOAD_DIR, { recursive: true, force: true });
 
 const { normalizePlanId } = require('../src/billing');
 const { resourceForPath } = require('../src/resources');
@@ -23,8 +27,8 @@ function test(name, fn) {
   tests.push({ name, fn });
 }
 
-async function request(base, method, pathname, body, token) {
-  const headers = { 'Content-Type': 'application/json' };
+async function request(base, method, pathname, body, token, extraHeaders) {
+  const headers = { 'Content-Type': 'application/json', ...(extraHeaders || {}) };
   if (token) headers.Authorization = 'Bearer ' + token;
   const res = await fetch(base + pathname, {
     method,
@@ -47,6 +51,9 @@ test('normaliza planos comerciais', () => {
 test('resolve recursos REST oficiais e aliases', () => {
   assert.strictEqual(resourceForPath('/api/leads').table, 'leads');
   assert.strictEqual(resourceForPath('/api/contacts').table, 'clientes');
+  assert.strictEqual(resourceForPath('/api/contatos').table, 'clientes');
+  assert.strictEqual(resourceForPath('/api/atendimentos').table, 'conversas');
+  assert.strictEqual(resourceForPath('/api/logs').table, 'audit_logs');
   assert.strictEqual(resourceForPath('/api/messages').table, 'mensagens');
   assert.strictEqual(resourceForPath('/api/integrations').table, 'integracoes');
   assert.strictEqual(resourceForPath('/api/funil-etapas').table, 'funil_etapas');
@@ -101,10 +108,15 @@ test('migration contem tabelas minimas, RLS e indices', () => {
   });
   assert.ok(sql.includes('enable row level security'));
   assert.ok(sql.includes('app_private.has_empresa_access'));
+  assert.ok(sql.includes('app_private.can_write_empresa'));
+  assert.ok(sql.includes('app_private.is_empresa_admin'));
   assert.ok(sql.includes('public.dashboard_resumo'));
+  assert.ok(sql.includes('public.contatos'));
+  assert.ok(sql.includes('public.atendimentos'));
   assert.ok(sql.includes('security_invoker'));
   assert.ok(sql.includes('idx_leads_empresa_created'));
   assert.ok(sql.includes('idx_integracoes_empresa_tipo'));
+  assert.ok(sql.includes('idx_mensagens_empresa_external_unique'));
 });
 
 test('servidor responde health, login, rotas protegidas e Evolution sem config', async () => {
@@ -138,6 +150,14 @@ test('servidor responde health, login, rotas protegidas e Evolution sem config',
     assert.strictEqual(out.res.status, 200);
     assert.ok(Array.isArray(out.data.data));
 
+    out = await request(base, 'GET', '/api/contatos', undefined, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.ok(Array.isArray(out.data.data));
+
+    out = await request(base, 'GET', '/api/atendimentos', undefined, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.ok(Array.isArray(out.data.data));
+
     out = await request(base, 'GET', '/api/reports/dashboard', undefined, token);
     assert.strictEqual(out.res.status, 200);
     assert.strictEqual(out.data.success, true);
@@ -150,6 +170,52 @@ test('servidor responde health, login, rotas protegidas e Evolution sem config',
     out = await request(base, 'POST', '/api/messages/send', { number: '5547999990000', text: 'Ola' }, token);
     assert.strictEqual(out.res.status, 200);
     assert.strictEqual(out.data.configured, false);
+
+    out = await request(base, 'POST', '/api/files/upload', {
+      nome: 'contrato.txt',
+      mime_type: 'text/plain',
+      content_base64: Buffer.from('arquivo de teste').toString('base64'),
+      lead_id: '00000000-0000-4000-8000-000000000100'
+    }, token);
+    assert.strictEqual(out.res.status, 201);
+    assert.ok(out.data.data.id);
+    assert.strictEqual(out.data.data.mime_type, 'text/plain');
+
+    const webhookPayload = {
+      event: 'messages.upsert',
+      instance: 'r2r-crm',
+      data: {
+        key: { remoteJid: '5547999990000@s.whatsapp.net', fromMe: false, id: 'wa-msg-1' },
+        pushName: 'Lead WhatsApp',
+        message: { conversation: 'Ola, quero atendimento' }
+      }
+    };
+    out = await request(base, 'POST', '/api/webhooks/evolution', webhookPayload, undefined, { 'x-evolution-secret': 'test-secret' });
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.data.message_saved, true);
+
+    out = await request(base, 'POST', '/api/webhooks/evolution', webhookPayload, undefined, { 'x-evolution-secret': 'test-secret' });
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.data.duplicate, true);
+
+    out = await request(base, 'POST', '/api/api-keys', { nome: 'Webhook Evolution Teste' }, token);
+    assert.strictEqual(out.res.status, 201);
+    assert.ok(out.data.api_key);
+
+    const oldWebhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET;
+    process.env.EVOLUTION_WEBHOOK_SECRET = '';
+    out = await request(base, 'POST', '/api/webhooks/evolution', {
+      event: 'messages.upsert',
+      instance: 'r2r-crm',
+      data: {
+        key: { remoteJid: '5547888880000@s.whatsapp.net', fromMe: false, id: 'wa-msg-2' },
+        pushName: 'Lead API Key',
+        message: { conversation: 'Webhook com API key' }
+      }
+    }, undefined, { 'x-api-key': out.data.api_key });
+    process.env.EVOLUTION_WEBHOOK_SECRET = oldWebhookSecret;
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.data.message_saved, true);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
@@ -167,5 +233,6 @@ test('servidor responde health, login, rotas protegidas e Evolution sem config',
     }
   }
   fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(process.env.UPLOAD_DIR, { recursive: true, force: true });
   if (process.exitCode) process.exit(process.exitCode);
 })();
