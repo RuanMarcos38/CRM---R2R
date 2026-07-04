@@ -1,8 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const { corsHeaders, securityHeaders } = require('./security');
+const { numberEnv } = require('./env');
 
-const JSON_LIMIT = Number(process.env.JSON_BODY_LIMIT_BYTES || 2_000_000);
+function jsonLimit() {
+  return numberEnv('JSON_BODY_LIMIT_BYTES', 2_000_000);
+}
 
 function cleanUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '');
@@ -30,7 +33,7 @@ function readBody(req) {
     let buffer = '';
     req.on('data', chunk => {
       buffer += chunk;
-      if (buffer.length > JSON_LIMIT) {
+      if (Buffer.byteLength(buffer) > jsonLimit()) {
         const err = new Error('Payload muito grande.');
         err.statusCode = 413;
         req.destroy(err);
@@ -42,6 +45,12 @@ function readBody(req) {
       try {
         resolve(JSON.parse(buffer));
       } catch (_) {
+        if (String(req.headers['content-type'] || '').includes('application/json')) {
+          const err = new Error('JSON invalido.');
+          err.statusCode = 400;
+          reject(err);
+          return;
+        }
         resolve({ raw: buffer });
       }
     });

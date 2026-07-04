@@ -11,38 +11,25 @@ const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
 
-const { loadEnv, boolEnv, listEnv } = require('./src/env');
+const { loadEnv, boolEnv, listEnv, numberEnv } = require('./src/env');
+loadEnv();
+
 const { readBody, sendJson, sendText, serveFile, cleanUrl } = require('./src/http');
-const { corsHeaders, checkRateLimit, securityHeaders, stripSensitiveFields, sha256 } = require('./src/security');
+const { corsHeaders, checkRateLimit, securityHeaders, stripSensitiveFields, randomToken } = require('./src/security');
 const { createStore } = require('./src/store');
-const { resolveAuthContext, requireAuth, verifyApiKey, createLocalSessionToken, localSessionTtlSeconds, localAdminProfile } = require('./src/auth');
+const { resolveAuthContext, requireAuth, verifyApiKey } = require('./src/auth');
 const { RESOURCES, resourceForPath } = require('./src/resources');
 const { buildReportsSummary } = require('./src/reports');
 const { normalizePlanId, publicBillingPlans, checkoutUrlForPlan, whatsappCheckoutFallback, saveBillingWebhookLog } = require('./src/billing');
-const { integrationStatus, openAIChat, normalizeEvolutionConfig, normalizeInstanceName, evolutionRequest, metaRequest } = require('./src/integrations');
+const { integrationStatus, openAIChat, normalizeEvolutionConfig, evolutionRequest, metaRequest, googleStatus } = require('./src/integrations');
 
-loadEnv();
-
-const VERSION = '2026.07.03-easypanel-node';
+const VERSION = '2026.06.29-saas';
 const PORT = Number(process.env.PORT || 3000);
-const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
 
 function demoAuthEnabled() {
   return boolEnv('ALLOW_DEMO_AUTH', store.kind === 'local' && process.env.NODE_ENV !== 'production');
-}
-
-function configuredAdminEmail() {
-  return String(process.env.R2R_ADMIN_EMAIL || '').trim().toLowerCase();
-}
-
-function adminPasswordMatches(password) {
-  const plain = String(process.env.R2R_ADMIN_PASSWORD || '');
-  const digest = String(process.env.R2R_ADMIN_PASSWORD_SHA256 || '').trim().toLowerCase();
-  if (!plain && !digest) return false;
-  if (plain && password === plain) return true;
-  return !!(digest && sha256(password) === digest);
 }
 
 function healthPayload(req) {
@@ -56,10 +43,6 @@ function healthPayload(req) {
     time: new Date().toISOString(),
     storage: store.kind,
     public_dir: PUBLIC_DIR,
-    entrypoint: 'repo-root-node',
-    node: process.version,
-    host: HOST,
-    port: PORT,
     api_base: publicConfig(req).api_base,
     integrations: integrationStatus(),
     supabase: {
@@ -79,12 +62,12 @@ async function readJsonResponse(response) {
 }
 
 function resolvePublicDir() {
-  const defaultPublicDir = path.join(__dirname, '..', 'frontend-public_html');
   const candidates = [
     process.env.PUBLIC_DIR,
     path.join(__dirname, 'frontend'),
     path.join(__dirname, '..', 'frontend'),
-    defaultPublicDir
+    path.join(__dirname, '..', 'frontend-public_html'),
+    __dirname
   ].filter(Boolean);
 
   for (const dir of candidates) {
@@ -92,7 +75,7 @@ function resolvePublicDir() {
       if (fs.existsSync(path.join(dir, 'index.html'))) return path.resolve(dir);
     } catch (_) {}
   }
-  return path.resolve(defaultPublicDir);
+  return path.resolve(__dirname);
 }
 
 async function handleLogin(req, res) {
@@ -102,24 +85,6 @@ async function handleLogin(req, res) {
 
   if (!email || !password) {
     return sendJson(req, res, 400, { ok: false, success: false, error: 'Informe email e senha.' });
-  }
-
-  const adminEmail = configuredAdminEmail();
-  if (adminEmail && email === adminEmail && adminPasswordMatches(password)) {
-    const authUser = { id: 'env-admin', email, local_admin: true };
-    const profile = await store.findProfileByAuthUser(authUser).catch(() => null) || localAdminProfile(authUser);
-    const token = createLocalSessionToken(authUser);
-    return sendJson(req, res, 200, {
-      ok: true,
-      success: true,
-      access_token: token,
-      expires_in: localSessionTtlSeconds(),
-      token_type: 'bearer',
-      user: authUser,
-      profile,
-      empresa_id: profile && profile.empresa_id || null,
-      message: 'Login administrativo realizado pelas variaveis do EasyPanel.'
-    });
   }
 
   const supabaseUrl = cleanUrl(process.env.SUPABASE_URL || process.env.SUPABASE_PUBLIC_URL || '');
@@ -195,7 +160,7 @@ function publicConfig(req) {
     plans: publicBillingPlans(),
     storage: store.kind,
     demo_mode: store.kind === 'local',
-    cors_origins: [...new Set([...listEnv('CORS_ORIGIN', []), ...listEnv('FRONTEND_URL', [])])].filter(Boolean)
+    cors_origins: listEnv('CORS_ORIGIN', ['*'])
   };
 }
 
@@ -239,7 +204,7 @@ async function getWhatsappConfig(ctx) {
   const cfg = normalizeEvolutionConfig({
     url: saved.url || process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || '',
     key: saved.key || saved.apiKey || saved.api_key || saved.apikey || process.env.EVOLUTION_API_KEY || '',
-    instance: saved.instance || saved.inst || process.env.EVOLUTION_INSTANCE || 'r2r-crm'
+    instance: saved.instance || saved.inst || process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm'
   });
   return { ...cfg, source: row ? 'database' : 'env', row };
 }
@@ -249,7 +214,7 @@ async function saveWhatsappConfig(ctx, body) {
   const currentConfig = current && current.config && typeof current.config === 'object' ? current.config : {};
   const url = cleanUrl(body.url || body.evolution_url || currentConfig.url || '');
   const key = String(body.apiKey || body.api_key || body.apikey || body.key || currentConfig.apiKey || currentConfig.api_key || currentConfig.key || '').trim();
-  const instance = normalizeInstanceName(body.instance || body.inst || currentConfig.instance || currentConfig.inst || 'r2r-crm');
+  const instance = String(body.instance || body.inst || currentConfig.instance || currentConfig.inst || 'r2r-crm').trim() || 'r2r-crm';
 
   if (!url) {
     const error = new Error('Informe a URL da Evolution API.');
@@ -280,6 +245,154 @@ async function saveWhatsappConfig(ctx, body) {
     ? await store.update('integracoes', current.id, payload, ctx, resource)
     : await store.insert('integracoes', payload, ctx, resource);
   return row;
+}
+
+function safeFileName(value) {
+  const base = path.basename(String(value || 'arquivo').trim() || 'arquivo');
+  return base
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 120) || 'arquivo';
+}
+
+function uploadRoot() {
+  return path.resolve(process.env.UPLOAD_DIR || path.join(process.cwd(), '.data', 'uploads'));
+}
+
+function allowedUploadTypes() {
+  return listEnv('UPLOAD_ALLOWED_MIME_TYPES', [
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'application/pdf',
+    'text/plain',
+    'text/csv'
+  ]);
+}
+
+function decodeBase64Upload(body) {
+  const raw = String(body.content_base64 || body.base64 || body.file_base64 || '');
+  if (!raw) return null;
+  const match = raw.match(/^data:([^;]+);base64,(.+)$/);
+  return {
+    mimeFromDataUrl: match ? match[1] : '',
+    buffer: Buffer.from(match ? match[2] : raw, 'base64')
+  };
+}
+
+function assertInsideRoot(root, target) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedTarget = path.resolve(target);
+  if (resolvedTarget !== resolvedRoot && !resolvedTarget.startsWith(resolvedRoot + path.sep)) {
+    const error = new Error('Caminho de arquivo invalido.');
+    error.statusCode = 400;
+    throw error;
+  }
+  return resolvedTarget;
+}
+
+function firstText(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function extractMessageText(message = {}) {
+  return firstText(
+    message.conversation,
+    message.extendedTextMessage && message.extendedTextMessage.text,
+    message.imageMessage && message.imageMessage.caption,
+    message.videoMessage && message.videoMessage.caption,
+    message.documentMessage && message.documentMessage.caption,
+    message.buttonsResponseMessage && message.buttonsResponseMessage.selectedDisplayText,
+    message.listResponseMessage && message.listResponseMessage.title
+  );
+}
+
+function extractEvolutionWebhook(body) {
+  const data = body && (body.data || body.message || body.messages || body);
+  const item = Array.isArray(data) ? data[0] : data || {};
+  const key = item.key || item.messageKey || {};
+  const remoteJid = firstText(key.remoteJid, item.remoteJid, item.chatId, item.from, item.sender);
+  const externalId = firstText(key.id, item.id, item.messageId, body && body.messageId);
+  const instance = firstText(body && body.instance, body && body.instanceName, item.instance, item.instanceName);
+  const pushName = firstText(item.pushName, item.senderName, item.notifyName, item.name);
+  const message = item.message || item.content || {};
+  const text = firstText(item.text, item.body, extractMessageText(message));
+  const timestamp = item.messageTimestamp || item.timestamp || body && body.date_time || null;
+  const number = remoteJid ? remoteJid.split('@')[0].replace(/\D/g, '') : '';
+
+  return {
+    event: firstText(body && body.event, body && body.type, item.event) || 'message',
+    instance,
+    remoteJid,
+    externalId,
+    pushName,
+    text,
+    number,
+    fromMe: Boolean(key.fromMe || item.fromMe),
+    timestamp
+  };
+}
+
+async function authorizeEvolutionWebhook(req, url) {
+  const configuredSecret = String(process.env.EVOLUTION_WEBHOOK_SECRET || '').trim();
+  if (configuredSecret) {
+    const provided = firstText(req.headers['x-evolution-secret'], req.headers['x-webhook-secret'], url.searchParams.get('secret'));
+    if (provided !== configuredSecret) {
+      const error = new Error('Webhook Evolution nao autorizado.');
+      error.statusCode = 401;
+      throw error;
+    }
+    return null;
+  }
+
+  const apiCtx = await verifyApiKey(req, store);
+  if (apiCtx) return apiCtx;
+
+  const error = new Error('Configure EVOLUTION_WEBHOOK_SECRET ou envie x-api-key de uma empresa.');
+  error.statusCode = 401;
+  throw error;
+}
+
+async function resolveEvolutionContext(req, url, body) {
+  const apiCtx = await authorizeEvolutionWebhook(req, url);
+  if (apiCtx) return apiCtx;
+
+  const parsed = extractEvolutionWebhook(body);
+  let empresaId = String(process.env.EVOLUTION_WEBHOOK_EMPRESA_ID || '').trim();
+  const instance = parsed.instance || process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || '';
+
+  if (!empresaId && instance) {
+    const rows = await store.list('integracoes', { 'eq.tipo': 'whatsapp', limit: 500 }, { system: true }, integrationResource({ allowSensitive: true })).catch(() => []);
+    const found = rows.find(row => {
+      const cfg = row.config && typeof row.config === 'object' ? row.config : {};
+      return [cfg.instance, cfg.inst, cfg.instanceName].filter(Boolean).includes(instance);
+    });
+    if (found) empresaId = found.empresa_id;
+  } else if (!empresaId) {
+    const rows = await store.list('integracoes', { 'eq.tipo': 'whatsapp', limit: 2 }, { system: true }, integrationResource({ allowSensitive: true })).catch(() => []);
+    if (rows.length === 1) empresaId = rows[0].empresa_id;
+  }
+
+  if (!empresaId) {
+    const error = new Error('Nao foi possivel identificar a empresa do webhook Evolution. Configure EVOLUTION_WEBHOOK_EMPRESA_ID ou salve a integracao com a instancia correta.');
+    error.statusCode = 422;
+    throw error;
+  }
+
+  return {
+    empresaId,
+    profile: null,
+    user: { id: 'evolution-webhook', email: null },
+    permissions: { tipo: 'webhook', admin: false, super_admin: false, can_write: true, custom: {} }
+  };
 }
 
 async function handlePublic(req, res, url) {
@@ -350,6 +463,10 @@ async function handleCrud(req, res, url, ctx) {
     return sendJson(req, res, 403, { ok: false, error: 'Empresa fora do escopo do usuario.' });
   }
 
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && !ctx.permissions.can_write) {
+    return sendJson(req, res, 403, { ok: false, error: 'Perfil sem permissao de escrita.' });
+  }
+
   const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req) : {};
   const query = Object.fromEntries(url.searchParams.entries());
   if (resource.table === 'empresas' && !ctx.permissions.super_admin) query['eq.id'] = ctx.empresaId;
@@ -387,7 +504,7 @@ async function handleCrud(req, res, url, ctx) {
 }
 
 async function handleReports(req, res, url, ctx) {
-  if ((url.pathname === '/api/reports/summary' || url.pathname === '/api/reports/dashboard' || url.pathname === '/api/dashboard') && req.method === 'GET') {
+  if ((url.pathname === '/api/reports/summary' || url.pathname === '/api/reports/dashboard') && req.method === 'GET') {
     const summary = await buildReportsSummary(store, ctx, Object.fromEntries(url.searchParams.entries()));
     return sendJson(req, res, 200, { ok: true, success: true, data: summary });
   }
@@ -423,6 +540,128 @@ async function handleSettings(req, res, url, ctx) {
   return sendJson(req, res, 405, { ok: false, success: false, error: 'Metodo nao permitido.' });
 }
 
+async function handleFiles(req, res, url, ctx) {
+  if ((url.pathname === '/api/files/upload' || url.pathname === '/api/arquivos/upload') && req.method === 'POST') {
+    if (!ctx.permissions.can_write) return sendJson(req, res, 403, { ok: false, error: 'Permissao insuficiente para enviar arquivos.' });
+    const body = await readBody(req);
+    const upload = decodeBase64Upload(body);
+    if (!upload || !upload.buffer.length) return sendJson(req, res, 400, { ok: false, error: 'Envie content_base64 com o arquivo em Base64.' });
+
+    const maxBytes = numberEnv('UPLOAD_MAX_BYTES', 10_000_000);
+    if (upload.buffer.length > maxBytes) return sendJson(req, res, 413, { ok: false, error: 'Arquivo acima do limite permitido.' });
+
+    const mimeType = String(body.mime_type || body.type || upload.mimeFromDataUrl || 'application/octet-stream').trim().toLowerCase();
+    if (!allowedUploadTypes().includes(mimeType)) {
+      return sendJson(req, res, 415, { ok: false, error: 'Tipo de arquivo nao permitido.' });
+    }
+
+    const root = uploadRoot();
+    const companyDir = assertInsideRoot(root, path.join(root, ctx.empresaId || 'sem-empresa'));
+    fs.mkdirSync(companyDir, { recursive: true });
+
+    const originalName = safeFileName(body.nome || body.name || body.filename || 'arquivo');
+    const storedName = `${Date.now()}-${randomToken('file').slice(5, 17)}-${originalName}`;
+    const absolutePath = assertInsideRoot(root, path.join(companyDir, storedName));
+    fs.writeFileSync(absolutePath, upload.buffer, { flag: 'wx' });
+
+    const relativePath = path.relative(root, absolutePath).replace(/\\/g, '/');
+    const row = await store.insert('arquivos', {
+      nome: originalName,
+      path: relativePath,
+      mime_type: mimeType,
+      size_bytes: upload.buffer.length,
+      lead_id: body.lead_id || null,
+      cliente_id: body.cliente_id || body.client_id || null,
+      oportunidade_id: body.oportunidade_id || null,
+      uploaded_by: ctx.profile && ctx.profile.id || null
+    }, ctx, RESOURCES.arquivos);
+
+    return sendJson(req, res, 201, { ok: true, success: true, data: safeData(row) });
+  }
+
+  const downloadMatch = url.pathname.match(/^\/api\/files\/([^/]+)\/download$/);
+  if (downloadMatch && req.method === 'GET') {
+    const row = await store.get('arquivos', decodeURIComponent(downloadMatch[1]), ctx, RESOURCES.arquivos);
+    if (!row) return sendJson(req, res, 404, { ok: false, error: 'Arquivo nao encontrado.' });
+    const root = uploadRoot();
+    const filePath = assertInsideRoot(root, path.join(root, row.path || ''));
+    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) return sendJson(req, res, 404, { ok: false, error: 'Arquivo fisico nao encontrado.' });
+    return serveFile(req, res, filePath);
+  }
+
+  return null;
+}
+
+async function handleEvolutionWebhook(req, res, url) {
+  if (!['/api/webhooks/evolution', '/api/evolution/webhook'].includes(url.pathname) || req.method !== 'POST') return null;
+  const body = await readBody(req);
+  const ctx = await resolveEvolutionContext(req, url, body);
+  const parsed = extractEvolutionWebhook(body);
+  const result = { event: parsed.event, instance: parsed.instance || null, message_saved: false, duplicate: false };
+
+  if (parsed.remoteJid) {
+    const duplicate = parsed.externalId
+      ? await store.list('mensagens', { 'eq.external_id': parsed.externalId, limit: 1 }, ctx, RESOURCES.mensagens).catch(() => [])
+      : [];
+
+    if (duplicate && duplicate.length) {
+      result.duplicate = true;
+    } else {
+      const conversations = await store.list('conversas', { 'eq.external_id': parsed.remoteJid, limit: 1 }, ctx, RESOURCES.conversas).catch(() => []);
+      let conversa = conversations && conversations[0];
+      if (!conversa) {
+        conversa = await store.insert('conversas', {
+          canal: 'whatsapp',
+          wa_contact_id: parsed.number || parsed.remoteJid,
+          external_id: parsed.remoteJid,
+          status: 'aberta',
+          ultima_mensagem: parsed.text || `[${parsed.event}]`,
+          ultima_mensagem_em: new Date().toISOString(),
+          nao_lidas: parsed.fromMe ? 0 : 1,
+          metadata: { instance: parsed.instance, push_name: parsed.pushName }
+        }, ctx, RESOURCES.conversas);
+      }
+
+      const mensagem = await store.insert('mensagens', {
+        conversa_id: conversa.id,
+        direcao: parsed.fromMe ? 'outbound' : 'inbound',
+        canal: 'whatsapp',
+        tipo: parsed.text ? 'text' : parsed.event,
+        texto: parsed.text || '',
+        external_id: parsed.externalId || null,
+        status: parsed.fromMe ? 'sent' : 'received',
+        metadata: {
+          instance: parsed.instance,
+          remote_jid: parsed.remoteJid,
+          push_name: parsed.pushName,
+          timestamp: parsed.timestamp,
+          event: parsed.event
+        }
+      }, ctx, RESOURCES.mensagens);
+
+      await store.update('conversas', conversa.id, {
+        ultima_mensagem: parsed.text || conversa.ultima_mensagem || `[${parsed.event}]`,
+        ultima_mensagem_em: new Date().toISOString(),
+        nao_lidas: parsed.fromMe ? Number(conversa.nao_lidas || 0) : Number(conversa.nao_lidas || 0) + 1
+      }, ctx, RESOURCES.conversas).catch(() => null);
+
+      result.message_saved = true;
+      result.mensagem_id = mensagem && mensagem.id;
+      result.conversa_id = conversa.id;
+    }
+  }
+
+  await store.insert('webhooks_logs', {
+    tipo: 'evolution',
+    direction: 'inbound',
+    status: result.message_saved || result.duplicate ? 'processed' : 'received',
+    payload: body,
+    response: result
+  }, ctx, RESOURCES.webhooks_logs).catch(() => null);
+
+  return sendJson(req, res, 200, { ok: true, success: true, data: result });
+}
+
 async function handleIntegrations(req, res, url, ctx) {
   if (url.pathname === '/api/integrations/status' && req.method === 'GET') {
     return sendJson(req, res, 200, { ok: true, success: true, integrations: integrationStatus() });
@@ -435,7 +674,30 @@ async function handleIntegrations(req, res, url, ctx) {
 
   if (url.pathname === '/api/ai/chat' && req.method === 'POST') {
     const body = await readBody(req);
-    const out = await openAIChat(body.message || body.text || 'Ola', body.history || [], ctx);
+    let history = body.history || [];
+    if (body.lead_id) {
+      const lead = await store.get('leads', body.lead_id, ctx, RESOURCES.leads).catch(() => null);
+      const activities = await store.list('atividades', { 'eq.lead_id': body.lead_id, limit: 10, order: 'created_at.desc' }, ctx, RESOURCES.atividades).catch(() => []);
+      if (lead) {
+        history = [
+          {
+            role: 'system',
+            content: 'Contexto do lead no CRM: ' + JSON.stringify({
+              nome: lead.nome,
+              empresa: lead.empresa,
+              origem: lead.origem_nome || lead.origem_lead,
+              etapa: lead.etapa,
+              status: lead.status,
+              temperatura: lead.temperatura,
+              score: lead.score,
+              historico_recente: activities.map(item => ({ tipo: item.tipo, descricao: item.descricao, created_at: item.created_at }))
+            })
+          },
+          ...(Array.isArray(history) ? history : [])
+        ];
+      }
+    }
+    const out = await openAIChat(body.message || body.text || 'Ola', history, ctx);
     if (body.lead_id) {
       await store.insert('atividades', {
         lead_id: body.lead_id,
@@ -518,11 +780,14 @@ async function handleIntegrations(req, res, url, ctx) {
 
   if ((url.pathname === '/api/whatsapp/send' || url.pathname === '/api/messages/send') && req.method === 'POST') {
     const body = await readBody(req);
+    const text = String(body.text || body.message || '').trim();
+    const number = String(body.number || body.telefone || body.phone || '').replace(/\D/g, '');
+    if (!number || !text) return sendJson(req, res, 400, { ok: false, success: false, error: 'Informe number/telefone e text/message.' });
     const cfg = await getWhatsappConfig(ctx);
     const instance = encodeURIComponent(body.instance || cfg.instance || 'r2r-crm');
     const result = await evolutionRequest(`/message/sendText/${instance}`, 'POST', {
-      number: body.number,
-      textMessage: { text: body.text || body.message || '' }
+      number,
+      textMessage: { text }
     }, cfg);
     return sendJson(req, res, 200, result);
   }
@@ -538,6 +803,10 @@ async function handleIntegrations(req, res, url, ctx) {
     const fields = 'name,status,objective,daily_budget,lifetime_budget,insights{spend,reach,impressions,clicks,actions}';
     const result = await metaRequest(`/${encodeURIComponent(accountId)}/campaigns?fields=${encodeURIComponent(fields)}&limit=50`);
     return sendJson(req, res, 200, result);
+  }
+
+  if ((url.pathname === '/api/google/status' || url.pathname === '/api/integrations/google/status') && req.method === 'GET') {
+    return sendJson(req, res, 200, googleStatus());
   }
 
   if (url.pathname === '/api/n8n/test' && req.method === 'POST') {
@@ -644,15 +913,16 @@ async function handleStatic(req, res, url) {
   let requested = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
   let filePath = path.join(PUBLIC_DIR, requested);
   const publicRoot = path.resolve(PUBLIC_DIR);
-  if (!path.resolve(filePath).startsWith(publicRoot)) return sendText(req, res, 403, 'Forbidden');
-  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) return sendText(req, res, 404, 'Not found');
+  const resolvedFile = path.resolve(filePath);
+  if (resolvedFile !== publicRoot && !resolvedFile.startsWith(publicRoot + path.sep)) return sendText(req, res, 403, 'Forbidden');
+  if (!fs.existsSync(resolvedFile) || fs.statSync(resolvedFile).isDirectory()) return sendText(req, res, 404, 'Not found');
 
-  if (path.extname(filePath).toLowerCase() === '.html') {
-    const html = fs.readFileSync(filePath, 'utf8');
+  if (path.extname(resolvedFile).toLowerCase() === '.html') {
+    const html = fs.readFileSync(resolvedFile, 'utf8');
     return sendText(req, res, 200, injectRuntimeConfig(html, req), { 'Content-Type': 'text/html; charset=utf-8' });
   }
 
-  return serveFile(req, res, filePath);
+  return serveFile(req, res, resolvedFile);
 }
 
 async function handleRequest(req, res) {
@@ -670,6 +940,9 @@ async function handleRequest(req, res) {
     const publicResult = await handlePublic(req, res, url);
     if (publicResult !== null) return publicResult;
 
+    const evolutionWebhook = await handleEvolutionWebhook(req, res, url);
+    if (evolutionWebhook !== null) return evolutionWebhook;
+
     const inbound = await handleInboundWebhook(req, res, url);
     if (inbound !== null) return inbound;
 
@@ -677,7 +950,7 @@ async function handleRequest(req, res) {
       const ctx = await requireAuth(req, store);
       ctx.ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
 
-      const handlers = [handleAuth, handleApiKeys, handleReports, handleSettings, handleIntegrations, handleBilling, handleCrud];
+      const handlers = [handleAuth, handleApiKeys, handleReports, handleSettings, handleFiles, handleIntegrations, handleBilling, handleCrud];
       for (const handler of handlers) {
         const result = await handler(req, res, url, ctx);
         if (result !== null) return result;
@@ -700,12 +973,11 @@ function createServer() {
 }
 
 if (require.main === module) {
-  createServer().listen(PORT, HOST, () => {
-    console.log(`R2R CRM SaaS API rodando em http://${HOST}:${PORT}`);
+  createServer().listen(PORT, () => {
+    console.log(`R2R CRM SaaS API rodando em http://localhost:${PORT}`);
     console.log(`[boot] versao      = ${VERSION}`);
     console.log(`[boot] storage     = ${store.kind}`);
     console.log(`[boot] public_dir  = ${PUBLIC_DIR}`);
-    console.log(`[boot] host        = ${HOST}`);
     console.log(`[boot] supabase    = ${process.env.SUPABASE_URL ? 'configurado parcialmente' : 'nao configurado'}`);
   });
 }

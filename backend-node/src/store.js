@@ -191,7 +191,7 @@ class LocalStore {
     if (!data[table]) data[table] = [];
     const clean = sanitizePayload(payload, {
       allowSensitive: resource && resource.allowSensitive,
-      blockCompanyId: resource && resource.companyScoped && !(ctx.permissions && ctx.permissions.super_admin)
+      blockCompanyId: resource && resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)
     });
     const row = { id: uuid(), ...clean, created_at: now(), updated_at: now() };
     if (resource && resource.companyScoped) row.empresa_id = ctx.empresaId || clean.empresa_id;
@@ -248,7 +248,7 @@ class LocalStore {
       prefixo: plainText.slice(0, 12),
       status: 'ativa',
       permissoes: { leads: ['create'], webhooks: ['inbound'] }
-    }, ctx, { companyScoped: true });
+    }, ctx, { companyScoped: true, allowSensitive: true });
     return { plainText, publicRow: { ...row, key_hash: undefined } };
   }
 }
@@ -291,7 +291,9 @@ class SupabaseStore {
     const params = new URLSearchParams();
     params.set('select', query.select || '*');
 
-    if (resource.companyScoped && !(ctx.permissions && ctx.permissions.super_admin && !query.empresa_id)) {
+    if (resource.companyScoped && ctx.system) {
+      if (query.empresa_id) params.set('empresa_id', `eq.${query.empresa_id}`);
+    } else if (resource.companyScoped && !(ctx.permissions && ctx.permissions.super_admin && !query.empresa_id)) {
       params.set('empresa_id', `eq.${ctx.empresaId}`);
     } else if (query.empresa_id) {
       params.set('empresa_id', `eq.${query.empresa_id}`);
@@ -324,7 +326,7 @@ class SupabaseStore {
     const params = new URLSearchParams();
     params.set('select', '*');
     params.set('id', `eq.${id}`);
-    if (resource.companyScoped && !(ctx.permissions && ctx.permissions.super_admin)) params.set('empresa_id', `eq.${ctx.empresaId}`);
+    if (resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)) params.set('empresa_id', `eq.${ctx.empresaId}`);
     const data = await this.request(`/${table}?${params.toString()}`);
     return data[0] || null;
   }
@@ -332,9 +334,9 @@ class SupabaseStore {
   async insert(table, payload, ctx = {}, resource = {}) {
     const clean = sanitizePayload(payload, {
       allowSensitive: resource && resource.allowSensitive,
-      blockCompanyId: resource && resource.companyScoped && !(ctx.permissions && ctx.permissions.super_admin)
+      blockCompanyId: resource && resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)
     });
-    if (resource.companyScoped && !clean.empresa_id) clean.empresa_id = ctx.empresaId;
+    if (resource.companyScoped && !clean.empresa_id && !ctx.system) clean.empresa_id = ctx.empresaId;
     const data = await this.request(`/${table}`, {
       method: 'POST',
       headers: { Prefer: 'return=representation' },
@@ -347,24 +349,36 @@ class SupabaseStore {
     const clean = sanitizePayload(payload, { allowSensitive: resource && resource.allowSensitive, blockCompanyId: true });
     const params = new URLSearchParams();
     params.set('id', `eq.${id}`);
-    if (resource.companyScoped && !(ctx.permissions && ctx.permissions.super_admin)) params.set('empresa_id', `eq.${ctx.empresaId}`);
+    if (resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)) params.set('empresa_id', `eq.${ctx.empresaId}`);
     const data = await this.request(`/${table}?${params.toString()}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify(clean)
     });
-    return Array.isArray(data) ? data[0] : data;
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) {
+      const error = new Error('Registro nao encontrado.');
+      error.statusCode = 404;
+      throw error;
+    }
+    return row;
   }
 
   async remove(table, id, ctx = {}, resource = {}) {
     const params = new URLSearchParams();
     params.set('id', `eq.${id}`);
-    if (resource.companyScoped && !(ctx.permissions && ctx.permissions.super_admin)) params.set('empresa_id', `eq.${ctx.empresaId}`);
+    if (resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)) params.set('empresa_id', `eq.${ctx.empresaId}`);
     const data = await this.request(`/${table}?${params.toString()}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=representation' }
     });
-    return Array.isArray(data) ? data[0] : data;
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) {
+      const error = new Error('Registro nao encontrado.');
+      error.statusCode = 404;
+      throw error;
+    }
+    return row;
   }
 
   async findProfileByAuthUser(authUser) {
@@ -394,7 +408,7 @@ class SupabaseStore {
       prefixo: plainText.slice(0, 12),
       status: 'ativa',
       permissoes: { leads: ['create'], webhooks: ['inbound'] }
-    }, ctx, { companyScoped: true });
+    }, ctx, { companyScoped: true, allowSensitive: true });
     return { plainText, publicRow: { ...row, key_hash: undefined } };
   }
 }
