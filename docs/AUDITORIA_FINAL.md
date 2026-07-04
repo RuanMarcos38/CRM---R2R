@@ -88,6 +88,7 @@ Data da entrega: 2026-07-04
 - Adicionado fallback automatico do frontend para `https://api.r2rmarketingdigital.com.br` quando o CRM roda em `https://crm.r2rmarketingdigital.com.br`.
 - Normalizada URL da Evolution sem protocolo, convertendo `evolution.dominio.com` para `https://evolution.dominio.com`.
 - Melhoradas mensagens quando a Evolution API esta inacessivel ou o dominio nao resolve no EasyPanel.
+- Reforcado fluxo de QR Code: o botao Conectar agora tambem envia a configuracao digitada para o backend quando o usuario e admin, evitando falso "nao configurado" se a persistencia ainda nao refletiu.
 - Atualizado `Dockerfile` para expor a porta 3000.
 - Reescritos testes para cobrir servidor HTTP, health, login, rotas protegidas, aliases, upload, webhook Evolution e Evolution sem configuracao.
 

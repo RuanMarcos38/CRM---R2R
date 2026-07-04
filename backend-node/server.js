@@ -209,6 +209,19 @@ async function getWhatsappConfig(ctx) {
   return { ...cfg, source: row ? 'database' : 'env', row };
 }
 
+function hasInlineWhatsappConfig(body) {
+  return !!(body && (body.url || body.evolution_url || body.apiKey || body.api_key || body.apikey || body.key || body.instance || body.inst || body.instanceName));
+}
+
+function mergeWhatsappConfig(savedConfig, body) {
+  const inline = normalizeEvolutionConfig(body || {});
+  return normalizeEvolutionConfig({
+    url: inline.url || savedConfig.url || '',
+    key: inline.key || savedConfig.key || '',
+    instance: inline.instance || savedConfig.instance || 'r2r-crm'
+  });
+}
+
 async function saveWhatsappConfig(ctx, body) {
   const current = await getWhatsappIntegration(ctx);
   const currentConfig = current && current.config && typeof current.config === 'object' ? current.config : {};
@@ -759,7 +772,11 @@ async function handleIntegrations(req, res, url, ctx) {
 
   if ((url.pathname === '/api/whatsapp/connect' || url.pathname === '/api/integrations/evolution/connect') && req.method === 'POST') {
     const body = await readBody(req);
-    const cfg = await getWhatsappConfig(ctx);
+    if (hasInlineWhatsappConfig(body) && !ctx.permissions.admin) {
+      return sendJson(req, res, 403, { ok: false, success: false, error: 'Somente admin pode usar credenciais inline da Evolution API.' });
+    }
+    const savedCfg = await getWhatsappConfig(ctx);
+    const cfg = hasInlineWhatsappConfig(body) ? mergeWhatsappConfig(savedCfg, body) : savedCfg;
     const result = await evolutionRequest('/instance/connect', 'POST', body, cfg);
     return sendJson(req, res, 200, result);
   }

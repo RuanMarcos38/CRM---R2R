@@ -1,5 +1,6 @@
 const assert = require('assert');
 const fs = require('fs');
+const http = require('http');
 const path = require('path');
 
 process.env.NODE_ENV = 'test';
@@ -166,6 +167,26 @@ test('servidor responde health, login, rotas protegidas e Evolution sem config',
     assert.strictEqual(out.res.status, 200);
     assert.strictEqual(out.data.configured, false);
     assert.strictEqual(out.data.status, 'not_configured');
+
+    const fakeEvolution = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ base64: 'iVBORw0KGgo=' }));
+    });
+    await new Promise(resolve => fakeEvolution.listen(0, '127.0.0.1', resolve));
+    const fakeEvolutionBase = 'http://127.0.0.1:' + fakeEvolution.address().port;
+    try {
+      out = await request(base, 'POST', '/api/whatsapp/connect', {
+        url: fakeEvolutionBase,
+        apiKey: 'evo-test-key',
+        instance: 'Ruan Marcos'
+      }, token);
+      assert.strictEqual(out.res.status, 200);
+      assert.strictEqual(out.data.configured, true);
+      assert.strictEqual(out.data.status, 'qrcode');
+      assert.ok(out.data.qrcode.startsWith('data:image/png;base64,'));
+    } finally {
+      await new Promise(resolve => fakeEvolution.close(resolve));
+    }
 
     out = await request(base, 'POST', '/api/messages/send', { number: '5547999990000', text: 'Ola' }, token);
     assert.strictEqual(out.res.status, 200);

@@ -202,6 +202,10 @@ As duas rotas precisam retornar JSON do backend. Se retornarem `502 Gateway Inco
 
 Para Evolution, a URL deve existir publicamente e com protocolo, por exemplo `https://evolution.seudominio.com.br`. Se o dominio do EasyPanel nao resolver DNS, o backend nao consegue gerar QR Code. A tela normaliza URL digitada sem `https://`, mas o dominio ainda precisa estar online.
 
+O botao Conectar envia a configuracao digitada na tela junto da chamada ao backend quando o usuario e admin. Isso evita falha de QR quando o salvamento da integracao ainda nao foi persistido, mas os segredos continuam passando pelo backend e nao ficam fixos no frontend.
+
+Diagnostico visto em producao: `https://evolution-evolution-api.hij8h.easypanel.host` nao resolveu DNS. Enquanto a URL publica da Evolution nao existir/responder, o backend nao conseguira buscar ou gerar QR Code.
+
 ## 7. Comandos de validacao
 
 Em ambiente com Node.js 18+:
