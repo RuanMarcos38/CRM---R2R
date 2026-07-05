@@ -310,6 +310,44 @@ test('servidor responde health, login, rotas protegidas e Evolution sem config',
       await new Promise(resolve => fakeEvolutionWithInstanceKey.close(resolve));
     }
 
+    const fakeEvolutionSingleInstance = http.createServer((req, res) => {
+      const apikey = req.headers.apikey;
+      if (req.url === '/instance/fetchInstances' && apikey === 'global-key') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify([
+          {
+            instance: {
+              instanceName: 'r2r-crm',
+              status: 'close'
+            }
+          }
+        ]));
+        return;
+      }
+      if (req.url === '/instance/connect/r2r-crm' && apikey === 'global-key') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ base64: 'iVBORw0KGgo=', count: 1 }));
+        return;
+      }
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ message: 'Unauthorized' }));
+    });
+    await new Promise(resolve => fakeEvolutionSingleInstance.listen(0, '127.0.0.1', resolve));
+    const fakeEvolutionSingleInstanceBase = 'http://127.0.0.1:' + fakeEvolutionSingleInstance.address().port;
+    try {
+      out = await request(base, 'POST', '/api/whatsapp/connect', {
+        url: fakeEvolutionSingleInstanceBase,
+        apiKey: 'global-key',
+        instance: 'Ruan Marcos'
+      }, token);
+      assert.strictEqual(out.res.status, 200);
+      assert.strictEqual(out.data.status, 'qrcode');
+      assert.strictEqual(out.data.instance, 'r2r-crm');
+      assert.ok(out.data.attempts.some(attempt => attempt.instance_match_strategy === 'single_instance' && attempt.detected_instance === 'r2r-crm'));
+    } finally {
+      await new Promise(resolve => fakeEvolutionSingleInstance.close(resolve));
+    }
+
     out = await request(base, 'POST', '/api/messages/send', { number: '5547999990000', text: 'Ola' }, token);
     assert.strictEqual(out.res.status, 200);
     assert.strictEqual(out.data.configured, false);
