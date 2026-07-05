@@ -1,5 +1,12 @@
 const { cleanUrl } = require('./http');
 
+let QRCode = null;
+try {
+  QRCode = require('qrcode');
+} catch (_) {
+  QRCode = null;
+}
+
 function envFirst(keys) {
   for (const key of keys) {
     const value = String(process.env[key] || '').trim();
@@ -115,11 +122,43 @@ function extractPairingCode(value, seen = new Set()) {
   return null;
 }
 
+function extractQrCodeText(value, seen = new Set()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) return null;
+  seen.add(value);
+
+  for (const [key, item] of Object.entries(value)) {
+    const normalized = key.toLowerCase().replace(/[_-]/g, '');
+    if (normalized === 'code' && typeof item === 'string') {
+      const text = item.trim();
+      if (text.length > 32 && !/^(iVBOR|\/9j\/|R0lGOD|PHN2Z)/.test(text)) return text;
+    }
+    if (item && typeof item === 'object') {
+      const found = extractQrCodeText(item, seen);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function normalizeQrDataUrl(value) {
   const qr = extractQr(value);
   if (!qr) return null;
   if (String(qr).startsWith('data:image/')) return qr;
   return `data:image/png;base64,${qr}`;
+}
+
+async function qrDataUrlFromEvolutionCode(value) {
+  const code = extractQrCodeText(value);
+  if (!code || !QRCode || typeof QRCode.toDataURL !== 'function') return null;
+  return QRCode.toDataURL(code, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 320,
+    color: {
+      dark: '#000000',
+      light: '#ffffff'
+    }
+  });
 }
 
 function evolutionHeaders(cfg, variant = 'apikey') {
@@ -313,7 +352,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
     ];
 
     for (const attempt of attempts) {
-      const qr = normalizeQrDataUrl(attempt.data);
+      const qr = normalizeQrDataUrl(attempt.data) || await qrDataUrlFromEvolutionCode(attempt.data);
       if (attempt.response && attempt.response.ok && qr) {
         return { ok: true, success: true, configured: true, status: 'qrcode', instance, qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(attempt.data), route: attempt.route, raw: attempt.data, data: attempt.data };
       }
@@ -322,7 +361,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
     for (const item of connectPaths) {
       try {
         const out = await evolutionHttp(cfg, item.route, item.method, { instanceName: instance, instance });
-        const qr = normalizeQrDataUrl(out.data);
+        const qr = normalizeQrDataUrl(out.data) || await qrDataUrlFromEvolutionCode(out.data);
         const pairingCode = extractPairingCode(out.data);
         attempts.push({ route: item.route, method: item.method, status: out.response.status, ok: out.response.ok, auth_variant: out.auth_variant, data: out.data });
         if (out.response.ok && qr) {
@@ -386,7 +425,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
   try {
     const { response, data } = await evolutionHttp(cfg, path, method, body);
     if (!response.ok) return evolutionHttpError(response, data, cfg, [{ route: path, method, status: response.status, ok: false }]);
-    const qr = normalizeQrDataUrl(data);
+    const qr = normalizeQrDataUrl(data) || await qrDataUrlFromEvolutionCode(data);
     return { ok: true, success: true, configured: true, status: qr ? 'qrcode' : 'ok', qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(data), raw: data, data };
   } catch (error) {
     return evolutionNetworkError(error);

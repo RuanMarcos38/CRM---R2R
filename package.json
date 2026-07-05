@@ -1,15 +1,15 @@
 {
   "name": "r2r-crm-saas",
-  "version": "2026.07.03",
+  "version": "2026.07.02",
   "description": "R2R CRM SaaS - entrada de compatibilidade para deploy pela raiz",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js",
-    "test": "node --check server.js"
+    "test": "cd backend-node && npm test",
+    "check": "node --check server.js && node --check backend-node/server.js"
   },
   "engines": {
-    "node": "20.x"
+    "node": ">=18"
   },
   "dependencies": {
     "qrcode": "^1.5.4"
