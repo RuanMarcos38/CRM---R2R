@@ -32,7 +32,7 @@ const {
   isCompanyAdmin
 } = require('./src/access');
 
-const VERSION = '2026.07.05-evolution-admin-fallback';
+const VERSION = '2026.07.05-evolution-env-url-fallback';
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
@@ -226,9 +226,8 @@ function getWhatsappEnvFallbackConfig(ctx, currentConfig = {}) {
   const envKey = String(process.env.EVOLUTION_API_KEY || '').trim();
   const currentUrl = cleanUrl(currentConfig.url || '');
   if (!envKey) return null;
-  if (currentUrl && envUrl && currentUrl !== envUrl && !globalIntegrationFallbackAllowed(ctx)) return null;
   const cfg = normalizeEvolutionConfig({
-    url: currentUrl || envUrl,
+    url: envUrl || currentUrl,
     key: envKey,
     instance: currentConfig.instance || process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm'
   });
