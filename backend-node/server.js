@@ -21,7 +21,7 @@ const { resolveAuthContext, requireAuth, verifyApiKey } = require('./src/auth');
 const { RESOURCES, resourceForPath } = require('./src/resources');
 const { buildReportsSummary } = require('./src/reports');
 const { normalizePlanId, publicBillingPlans, checkoutUrlForPlan, whatsappCheckoutFallback, saveBillingWebhookLog } = require('./src/billing');
-const { integrationStatus, openAIChat, normalizeEvolutionConfig, evolutionRequest, metaRequest, googleStatus } = require('./src/integrations');
+const { integrationStatus, openAIChat, normalizeEvolutionConfig, evolutionRequest, evolutionAuthProbe, metaRequest, googleStatus } = require('./src/integrations');
 const {
   assertFeatureEnabled,
   assertResourceAccess,
@@ -32,7 +32,7 @@ const {
   isCompanyAdmin
 } = require('./src/access');
 
-const VERSION = '2026.07.05-evolution-url-fallbacks';
+const VERSION = '2026.07.05-evolution-auth-diagnostics';
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
@@ -81,7 +81,8 @@ async function evolutionHealthProbe() {
     has_basic_auth: !!(evolutionEnvUsername() && evolutionEnvPassword()),
     instance,
     root: null,
-    roots: []
+    roots: [],
+    auth: null
   };
   if (!url) return result;
 
@@ -110,7 +111,16 @@ async function evolutionHealthProbe() {
     }
     result.roots.push(check);
     if (!result.root || check.reachable) result.root = check;
-    if (check.reachable) break;
+    if (check.reachable) {
+      result.auth = await evolutionAuthProbe({
+        url: candidate,
+        key: evolutionEnvKey(),
+        username: evolutionEnvUsername(),
+        password: evolutionEnvPassword(),
+        instance
+      });
+      break;
+    }
   }
   return result;
 }
@@ -309,15 +319,20 @@ function evolutionEnvPassword() {
   );
 }
 
+function forceEvolutionEnvCredentials() {
+  return boolEnv('EVOLUTION_FORCE_ENV_CREDENTIALS', false);
+}
+
 async function getWhatsappConfig(ctx) {
   const row = await getWhatsappIntegration(ctx);
   const saved = row && row.config && typeof row.config === 'object' ? row.config : {};
   const allowGlobal = globalIntegrationFallbackAllowed(ctx);
+  const forceEnv = allowGlobal && forceEvolutionEnvCredentials();
   const cfg = normalizeEvolutionConfig({
     url: saved.url || (allowGlobal ? evolutionEnvUrl() : ''),
-    key: saved.key || saved.apiKey || saved.api_key || saved.apikey || (allowGlobal ? evolutionEnvKey() : ''),
-    username: saved.username || saved.user || saved.login || (allowGlobal ? evolutionEnvUsername() : ''),
-    password: saved.password || saved.pass || saved.senha || (allowGlobal ? evolutionEnvPassword() : ''),
+    key: forceEnv ? evolutionEnvKey() || saved.key || saved.apiKey || saved.api_key || saved.apikey || '' : saved.key || saved.apiKey || saved.api_key || saved.apikey || (allowGlobal ? evolutionEnvKey() : ''),
+    username: forceEnv ? evolutionEnvUsername() || saved.username || saved.user || saved.login || '' : saved.username || saved.user || saved.login || (allowGlobal ? evolutionEnvUsername() : ''),
+    password: forceEnv ? evolutionEnvPassword() || saved.password || saved.pass || saved.senha || '' : saved.password || saved.pass || saved.senha || (allowGlobal ? evolutionEnvPassword() : ''),
     instance: saved.instance || saved.inst || (allowGlobal ? process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE : '') || 'r2r-crm'
   });
   return { ...cfg, source: row ? 'database' : 'env', row };

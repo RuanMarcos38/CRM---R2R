@@ -227,6 +227,49 @@ function evolutionAuthError(response, data, cfg, attempts = []) {
   };
 }
 
+async function evolutionAuthProbe(overrideConfig = null) {
+  const cfg = normalizeEvolutionConfig({ ...evolutionConfig(), ...(overrideConfig || {}) });
+  const result = {
+    configured: !!(cfg.url && (cfg.key || (cfg.username && cfg.password))),
+    instance: cfg.instance,
+    route: '/instance/fetchInstances',
+    attempts: []
+  };
+  if (!result.configured) return result;
+
+  const variants = [];
+  if (cfg.key) variants.push('apikey', 'bearer', 'authorization', 'x-api-key');
+  if (cfg.username && cfg.password) variants.push('basic');
+
+  for (const variant of variants) {
+    try {
+      const response = await fetchWithTimeout(cfg.url + '/instance/fetchInstances', {
+        method: 'GET',
+        headers: evolutionHeaders(cfg, variant)
+      });
+      const data = await readJsonResponse(response);
+      const remoteMessage = data && (data.message || data.error || data.raw) || '';
+      result.attempts.push({
+        auth_variant: variant,
+        ok: response.ok,
+        status: response.status,
+        remote_message: String(remoteMessage || '').slice(0, 220)
+      });
+      if (response.ok) break;
+    } catch (error) {
+      result.attempts.push({
+        auth_variant: variant,
+        ok: false,
+        status: 'network_error',
+        error: String(error && (error.code || error.cause && error.cause.code || error.message) || 'erro desconhecido').slice(0, 220)
+      });
+    }
+  }
+
+  result.authenticated = result.attempts.some(attempt => attempt.ok);
+  return result;
+}
+
 function evolutionHttpError(response, data, cfg, attempts = []) {
   if (response && (response.status === 401 || response.status === 403)) {
     return evolutionAuthError(response, data, cfg, attempts);
@@ -507,4 +550,4 @@ function googleStatus() {
   };
 }
 
-module.exports = { integrationStatus, openAIChat, evolutionConfig, normalizeEvolutionConfig, evolutionRequest, metaRequest, googleStatus };
+module.exports = { integrationStatus, openAIChat, evolutionConfig, normalizeEvolutionConfig, evolutionRequest, evolutionAuthProbe, metaRequest, googleStatus };
