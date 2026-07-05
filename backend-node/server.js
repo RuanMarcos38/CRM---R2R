@@ -32,7 +32,7 @@ const {
   isCompanyAdmin
 } = require('./src/access');
 
-const VERSION = '2026.07.05-evolution-diagnostics';
+const VERSION = '2026.07.05-evolution-url-fallbacks';
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
@@ -70,41 +70,47 @@ function safeUrlHost(value) {
 }
 
 async function evolutionHealthProbe() {
-  const url = evolutionEnvUrl();
+  const urls = evolutionEnvUrlCandidates();
+  const url = urls[0] || '';
   const instance = process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm';
   const result = {
     configured: !!url,
     host: safeUrlHost(url),
+    candidates: urls.map(safeUrlHost).filter(Boolean),
     has_api_key: !!evolutionEnvKey(),
     has_basic_auth: !!(evolutionEnvUsername() && evolutionEnvPassword()),
     instance,
-    root: null
+    root: null,
+    roots: []
   };
   if (!url) return result;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      signal: controller.signal
-    });
-    const text = await response.text().catch(() => '');
-    result.root = {
-      reachable: true,
-      ok: response.ok,
-      status: response.status,
-      content_type: response.headers.get('content-type') || '',
-      sample: text.slice(0, 220)
-    };
-  } catch (error) {
-    result.root = {
-      reachable: false,
-      error: String(error && (error.code || error.cause && error.cause.code || error.message) || 'erro desconhecido').slice(0, 220)
-    };
-  } finally {
-    clearTimeout(timeout);
+  for (const candidate of urls) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const check = { host: safeUrlHost(candidate), reachable: false };
+    try {
+      const response = await fetch(candidate, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal
+      });
+      const text = await response.text().catch(() => '');
+      Object.assign(check, {
+        reachable: true,
+        ok: response.ok,
+        status: response.status,
+        content_type: response.headers.get('content-type') || '',
+        sample: text.slice(0, 220)
+      });
+    } catch (error) {
+      check.error = String(error && (error.code || error.cause && error.cause.code || error.message) || 'erro desconhecido').slice(0, 220);
+    } finally {
+      clearTimeout(timeout);
+    }
+    result.roots.push(check);
+    if (!result.root || check.reachable) result.root = check;
+    if (check.reachable) break;
   }
   return result;
 }
@@ -256,7 +262,21 @@ async function getWhatsappIntegration(ctx) {
 }
 
 function evolutionEnvUrl() {
-  return cleanUrl(process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || '');
+  return evolutionEnvUrlCandidates()[0] || '';
+}
+
+function evolutionEnvUrlCandidates(extraUrl = '') {
+  const urls = [];
+  function add(value) {
+    const url = cleanUrl(value || '');
+    if (url && !urls.includes(url)) urls.push(url);
+  }
+  add(extraUrl);
+  add(process.env.EVOLUTION_API_URL);
+  add(process.env.EVOLUTION_URL);
+  add(process.env.EVOLUTION_API_URL_FALLBACK);
+  add(process.env.EVOLUTION_URL_FALLBACK);
+  return urls;
 }
 
 function evolutionEnvKey() {
@@ -303,25 +323,25 @@ async function getWhatsappConfig(ctx) {
   return { ...cfg, source: row ? 'database' : 'env', row };
 }
 
-function getWhatsappEnvFallbackConfig(ctx, currentConfig = {}) {
+function getWhatsappEnvFallbackConfigs(ctx, currentConfig = {}) {
   const canUseFallback = globalIntegrationFallbackAllowed(ctx) || isCompanyAdmin(ctx);
-  if (!canUseFallback) return null;
-  const envUrl = evolutionEnvUrl();
+  if (!canUseFallback) return [];
+  const envUrls = evolutionEnvUrlCandidates(currentConfig.url);
   const envKey = evolutionEnvKey();
   const envUser = evolutionEnvUsername();
   const envPassword = evolutionEnvPassword();
-  const currentUrl = cleanUrl(currentConfig.url || '');
-  if (!envKey && !(envUser && envPassword)) return null;
-  const cfg = normalizeEvolutionConfig({
-    url: envUrl || currentUrl,
-    key: envKey,
-    username: envUser,
-    password: envPassword,
-    instance: currentConfig.instance || process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm'
-  });
-  if (!cfg.url || (!cfg.key && !(cfg.username && cfg.password))) return null;
-  if (cfg.url === currentConfig.url && cfg.key === currentConfig.key && cfg.username === currentConfig.username && cfg.password === currentConfig.password && cfg.instance === currentConfig.instance) return null;
-  return { ...cfg, source: 'env_fallback', row: currentConfig.row || null };
+  if (!envKey && !(envUser && envPassword)) return [];
+  return envUrls
+    .map(url => normalizeEvolutionConfig({
+      url,
+      key: envKey,
+      username: envUser,
+      password: envPassword,
+      instance: currentConfig.instance || process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm'
+    }))
+    .filter(cfg => cfg.url && (cfg.key || (cfg.username && cfg.password)))
+    .filter(cfg => !(cfg.url === currentConfig.url && cfg.key === currentConfig.key && cfg.username === currentConfig.username && cfg.password === currentConfig.password && cfg.instance === currentConfig.instance))
+    .map(cfg => ({ ...cfg, source: 'env_fallback', row: currentConfig.row || null }));
 }
 
 function shouldRetryWhatsappWithEnv(result) {
@@ -340,21 +360,31 @@ async function evolutionRequestWithFallback(ctx, pathname, method = 'GET', body,
   const result = await evolutionRequest(pathname, method, body, primaryCfg);
   if (!shouldRetryWhatsappWithEnv(result)) return result;
 
-  const fallbackCfg = getWhatsappEnvFallbackConfig(ctx, primaryCfg);
-  if (!fallbackCfg) return result;
+  const fallbackCfgs = getWhatsappEnvFallbackConfigs(ctx, primaryCfg);
+  if (!fallbackCfgs.length) return result;
 
-  const fallback = await evolutionRequest(pathname, method, body, fallbackCfg);
-  if (fallback && fallback.ok !== false) {
-    return {
-      ...fallback,
-      credential_source: 'env_fallback',
-      message: fallback.message || 'Evolution conectada usando a credencial global do backend.'
-    };
+  const fallbackErrors = [];
+  for (const fallbackCfg of fallbackCfgs) {
+    const fallback = await evolutionRequest(pathname, method, body, fallbackCfg);
+    if (fallback && !shouldRetryWhatsappWithEnv(fallback)) {
+      return {
+        ...fallback,
+        credential_source: 'env_fallback',
+        credential_host: safeUrlHost(fallbackCfg.url),
+        message: fallback.message || 'Evolution conectada usando a credencial global do backend.'
+      };
+    }
+    fallbackErrors.push({
+      host: safeUrlHost(fallbackCfg.url),
+      status: fallback && (fallback.status || fallback.remote_status) || 'error',
+      error: fallback && (fallback.error_detail || fallback.error || fallback.message) || 'Credencial global falhou.'
+    });
   }
   return {
     ...result,
     fallback_attempted: true,
-    fallback_error: fallback && (fallback.error || fallback.message) || 'Credencial global tambem falhou.',
+    fallback_errors: fallbackErrors,
+    fallback_error: fallbackErrors.map(item => `${item.host}: ${item.error}`).join(' | ') || 'Credencial global tambem falhou.',
     error: 'Evolution API recusou a API Key salva e tambem a EVOLUTION_API_KEY do EasyPanel.',
     message: 'Evolution API recusou autenticacao. Atualize a API Key Global da Evolution no EasyPanel/CRM e tente novamente.'
   };
