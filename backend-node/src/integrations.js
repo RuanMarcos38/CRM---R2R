@@ -178,6 +178,41 @@ function extractQrCodeText(value, seen = new Set()) {
   return null;
 }
 
+function evolutionInstanceName(item) {
+  return item && (
+    item.name ||
+    item.instanceName ||
+    item.id ||
+    item.instance && (item.instance.instanceName || item.instance.name || item.instance.id)
+  ) || '';
+}
+
+function evolutionConnectionStatus(item) {
+  return item && (
+    item.connectionStatus ||
+    item.status ||
+    item.state ||
+    item.instance && (item.instance.state || item.instance.status || item.instance.connectionStatus)
+  ) || 'not_found';
+}
+
+function sameEvolutionInstanceName(a, b) {
+  const clean = value => String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+  return clean(a) && clean(a) === clean(b);
+}
+
+function findEvolutionInstance(data, instance) {
+  const list = Array.isArray(data) ? data : [];
+  return list.find(item => {
+    const name = evolutionInstanceName(item);
+    return name === instance || sameEvolutionInstanceName(name, instance);
+  }) || null;
+}
+
+function remoteMessageFromEvolution(data) {
+  return String(data && (data.message || data.error || data.raw) || '').slice(0, 300);
+}
+
 function normalizeQrDataUrl(value) {
   const qr = extractQr(value);
   if (!qr) return null;
@@ -413,14 +448,8 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       if (!response.ok) {
         return evolutionHttpError(response, data, cfg, [{ route: pathname, method: 'GET', status: response.status, ok: false, auth_variant }]);
       }
-      const list = Array.isArray(data) ? data : [];
-      const found = list.find(item =>
-        item.name === cfg.instance ||
-        item.instanceName === cfg.instance ||
-        item.id === cfg.instance ||
-        (item.instance && item.instance.instanceName === cfg.instance)
-      );
-      const status = found && (found.connectionStatus || found.status || found.state || (found.instance && found.instance.state)) || 'not_found';
+      const found = findEvolutionInstance(data, cfg.instance);
+      const status = evolutionConnectionStatus(found);
       return { ok: true, success: true, configured: true, connected: status === 'open', status, instance: cfg.instance, data: found || null };
     } catch (error) {
       return evolutionNetworkError(error);
@@ -428,14 +457,39 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
   }
 
   if (pathname === '/instance/connect' && method === 'POST') {
-    const instance = (body && body.instance) || cfg.instance;
-    const createPayload = { instanceName: instance, qrcode: true, integration: 'WHATSAPP-BAILEYS' };
+    let instance = (body && body.instance) || cfg.instance;
     const attempts = [];
 
     try {
-      attempts.push({ route: '/instance/create', ...(await evolutionHttp(cfg, '/instance/create', 'POST', createPayload)) });
+      const statusAttempt = await evolutionHttp(cfg, '/instance/fetchInstances', 'GET', null);
+      const found = statusAttempt.response && statusAttempt.response.ok ? findEvolutionInstance(statusAttempt.data, instance) : null;
+      const foundName = evolutionInstanceName(found);
+      const foundStatus = evolutionConnectionStatus(found);
+      attempts.push({
+        route: '/instance/fetchInstances',
+        method: 'GET',
+        status: statusAttempt.response.status,
+        ok: statusAttempt.response.ok,
+        auth_variant: statusAttempt.auth_variant,
+        remote_message: remoteMessageFromEvolution(statusAttempt.data),
+        instance_found: !!found,
+        instance_status: foundStatus
+      });
+      if (foundName) instance = foundName;
+      if (foundStatus === 'open') {
+        return {
+          ok: true,
+          success: true,
+          configured: true,
+          connected: true,
+          status: 'open',
+          instance,
+          message: 'WhatsApp ja esta conectado na Evolution API.',
+          attempts
+        };
+      }
     } catch (error) {
-      attempts.push({ route: '/instance/create', error: error.message });
+      attempts.push({ route: '/instance/fetchInstances', method: 'GET', error: error.message });
     }
 
     const connectPaths = [
@@ -445,35 +499,52 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       { route: `/instance/qrcode/${encodeURIComponent(instance)}`, method: 'GET' }
     ];
 
-    for (const attempt of attempts) {
-      const qr = normalizeQrDataUrl(attempt.data) || await qrDataUrlFromEvolutionCode(attempt.data);
-      if (attempt.response && attempt.response.ok && qr) {
-        return { ok: true, success: true, configured: true, status: 'qrcode', instance, qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(attempt.data), route: attempt.route, raw: attempt.data, data: attempt.data };
-      }
-    }
-
     for (const item of connectPaths) {
       try {
         const out = await evolutionHttp(cfg, item.route, item.method, { instanceName: instance, instance });
         const qr = normalizeQrDataUrl(out.data) || await qrDataUrlFromEvolutionCode(out.data);
         const pairingCode = extractPairingCode(out.data);
-        attempts.push({ route: item.route, method: item.method, status: out.response.status, ok: out.response.ok, auth_variant: out.auth_variant, data: out.data });
+        attempts.push({
+          route: item.route,
+          method: item.method,
+          status: out.response.status,
+          ok: out.response.ok,
+          auth_variant: out.auth_variant,
+          remote_message: remoteMessageFromEvolution(out.data),
+          data: out.data
+        });
         if (out.response.ok && qr) {
-          return { ok: true, success: true, configured: true, status: 'qrcode', instance, qrCode: qr, qrcode: qr, qr, pairing_code: pairingCode, route: item.route, raw: out.data, data: out.data };
+          return { ok: true, success: true, configured: true, status: 'qrcode', instance, qrCode: qr, qrcode: qr, qr, pairing_code: pairingCode, route: item.route, raw: out.data, data: out.data, attempts };
         }
         if (out.response.ok && pairingCode) {
-          return { ok: true, success: true, configured: true, status: 'pairing_code', instance, pairing_code: pairingCode, route: item.route, raw: out.data, data: out.data, message: 'A Evolution retornou codigo de pareamento, nao QR Code.' };
+          return { ok: true, success: true, configured: true, status: 'pairing_code', instance, pairing_code: pairingCode, route: item.route, raw: out.data, data: out.data, message: 'A Evolution retornou codigo de pareamento, nao QR Code.', attempts };
         }
       } catch (error) {
         attempts.push({ route: item.route, method: item.method, error: error.message });
       }
     }
 
+    const createPayload = { instanceName: instance, qrcode: true, integration: 'WHATSAPP-BAILEYS' };
+    try {
+      const createAttempt = { route: '/instance/create', method: 'POST', ...(await evolutionHttp(cfg, '/instance/create', 'POST', createPayload)) };
+      createAttempt.status = createAttempt.response && createAttempt.response.status;
+      createAttempt.ok = createAttempt.response && createAttempt.response.ok;
+      createAttempt.remote_message = remoteMessageFromEvolution(createAttempt.data);
+      attempts.push(createAttempt);
+      const qr = normalizeQrDataUrl(createAttempt.data) || await qrDataUrlFromEvolutionCode(createAttempt.data);
+      if (createAttempt.response && createAttempt.response.ok && qr) {
+        return { ok: true, success: true, configured: true, status: 'qrcode', instance, qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(createAttempt.data), route: createAttempt.route, raw: createAttempt.data, data: createAttempt.data, attempts };
+      }
+    } catch (error) {
+      attempts.push({ route: '/instance/create', method: 'POST', error: error.message });
+    }
+
+    const authenticated = attempts.some(attempt => attempt.route === '/instance/fetchInstances' && attempt.ok);
     const authFailure = attempts.find(attempt => {
       const status = attempt.status || (attempt.response && attempt.response.status);
       return status === 401 || status === 403;
     });
-    if (authFailure) {
+    if (authFailure && !authenticated) {
       const authStatus = authFailure.status || (authFailure.response && authFailure.response.status);
       return evolutionAuthError(
         { status: authStatus },
@@ -485,6 +556,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
           status: attempt.status || (attempt.response && attempt.response.status) || null,
           ok: attempt.ok || (attempt.response && attempt.response.ok) || false,
           auth_variant: attempt.auth_variant || null,
+          remote_message: attempt.remote_message || null,
           error: attempt.error || null
         }))
       );
@@ -493,6 +565,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
     const failedAttempts = attempts.filter(attempt => attempt.error);
     const onlyErrors = attempts.length > 0 && failedAttempts.length === attempts.length;
     const firstError = failedAttempts.find(attempt => attempt.error) || {};
+    const firstRemoteFailure = attempts.find(attempt => !attempt.ok && !attempt.error && attempt.status);
     return {
       ok: true,
       success: false,
@@ -505,13 +578,14 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       instance,
       message: onlyErrors
         ? `Evolution API inacessivel pelo backend (${String(firstError.error || 'erro de rede').slice(0, 180)}). Verifique URL/dominio no EasyPanel e confirme se a API esta online.`
-        : 'Evolution API respondeu, mas nao retornou QR Code. Verifique se a instancia ja esta conectada, se o nome da instancia esta correto ou consulte os detalhes no log.',
+        : `Evolution autenticou, mas nao liberou QR Code${firstRemoteFailure ? ` (HTTP ${firstRemoteFailure.status}${firstRemoteFailure.remote_message ? `: ${firstRemoteFailure.remote_message}` : ''})` : ''}. Verifique se a instancia existe, se ja esta conectada ou se precisa ser desconectada/recriada na Evolution.`,
       attempts: attempts.map(attempt => ({
         route: attempt.route,
         method: attempt.method,
         status: attempt.status || (attempt.response && attempt.response.status) || null,
         ok: attempt.ok || (attempt.response && attempt.response.ok) || false,
         auth_variant: attempt.auth_variant || null,
+        remote_message: attempt.remote_message || null,
         error: attempt.error || null
       }))
     };
