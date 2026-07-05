@@ -32,7 +32,7 @@ const {
   isCompanyAdmin
 } = require('./src/access');
 
-const VERSION = '2026.07.05-evolution-env-fallback';
+const VERSION = '2026.07.05-evolution-admin-fallback';
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
@@ -220,11 +220,17 @@ async function getWhatsappConfig(ctx) {
 }
 
 function getWhatsappEnvFallbackConfig(ctx, currentConfig = {}) {
-  if (!globalIntegrationFallbackAllowed(ctx)) return null;
+  const canUseFallback = globalIntegrationFallbackAllowed(ctx) || isCompanyAdmin(ctx);
+  if (!canUseFallback) return null;
+  const envUrl = cleanUrl(process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || '');
+  const envKey = String(process.env.EVOLUTION_API_KEY || '').trim();
+  const currentUrl = cleanUrl(currentConfig.url || '');
+  if (!envKey) return null;
+  if (currentUrl && envUrl && currentUrl !== envUrl && !globalIntegrationFallbackAllowed(ctx)) return null;
   const cfg = normalizeEvolutionConfig({
-    url: process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || currentConfig.url || '',
-    key: process.env.EVOLUTION_API_KEY || '',
-    instance: process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || currentConfig.instance || 'r2r-crm'
+    url: currentUrl || envUrl,
+    key: envKey,
+    instance: currentConfig.instance || process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm'
   });
   if (!cfg.url || !cfg.key) return null;
   if (cfg.url === currentConfig.url && cfg.key === currentConfig.key && cfg.instance === currentConfig.instance) return null;
@@ -259,7 +265,9 @@ async function evolutionRequestWithFallback(ctx, pathname, method = 'GET', body,
   return {
     ...result,
     fallback_attempted: true,
-    fallback_error: fallback && (fallback.error || fallback.message) || 'Credencial global tambem falhou.'
+    fallback_error: fallback && (fallback.error || fallback.message) || 'Credencial global tambem falhou.',
+    error: 'Evolution API recusou a API Key salva e tambem a EVOLUTION_API_KEY do EasyPanel.',
+    message: 'Evolution API recusou autenticacao. Atualize a API Key Global da Evolution no EasyPanel/CRM e tente novamente.'
   };
 }
 
