@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { cleanUrl } = require('./http');
+const { boolEnv } = require('./env');
 const { sanitizePayload, randomToken, sha256 } = require('./security');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), '.data');
@@ -30,6 +31,36 @@ function normalizeValue(value) {
   if (value === 'null') return null;
   if (value !== '' && value !== null && !Number.isNaN(Number(value)) && /^-?\d+(\.\d+)?$/.test(String(value))) return Number(value);
   return value;
+}
+
+const TENANT_RELATIONS = {
+  clientes: { lead_id: 'leads', responsavel_id: 'usuarios' },
+  oportunidades: { lead_id: 'leads', cliente_id: 'clientes', responsavel_id: 'usuarios' },
+  atividades: { lead_id: 'leads', cliente_id: 'clientes', usuario_id: 'usuarios' },
+  tarefas: { lead_id: 'leads', cliente_id: 'clientes', responsavel_id: 'usuarios' },
+  conversas: { lead_id: 'leads', cliente_id: 'clientes', responsavel_id: 'usuarios' },
+  mensagens: { conversa_id: 'conversas', lead_id: 'leads', cliente_id: 'clientes', usuario_id: 'usuarios' },
+  automacao_regras: { automacao_id: 'automacoes' },
+  arquivos: { lead_id: 'leads', cliente_id: 'clientes', oportunidade_id: 'oportunidades', uploaded_by: 'usuarios' },
+  lead_tags: { lead_id: 'leads', tag_id: 'tags' },
+  notificacoes: { usuario_id: 'usuarios' },
+  audit_logs: { usuario_id: 'usuarios' }
+};
+
+function relationError(table, field) {
+  const error = new Error(`Relacao invalida: ${table}.${field} pertence a outra empresa ou nao existe.`);
+  error.statusCode = 403;
+  return error;
+}
+
+function tenantForWrite(clean, ctx, resource) {
+  if (!(resource && resource.companyScoped)) return null;
+  if (clean && clean.empresa_id) return clean.empresa_id;
+  return ctx && ctx.empresaId || null;
+}
+
+function emailProfileLinkAllowed() {
+  return boolEnv('ALLOW_EMAIL_PROFILE_LINK', boolEnv('ALLOW_DEMO_AUTH', false) && process.env.NODE_ENV !== 'production');
 }
 
 function applyFilters(rows, query, resource) {
@@ -72,7 +103,7 @@ function scopeRows(rows, ctx, resource) {
   if (ctx && ctx.permissions && ctx.permissions.super_admin && ctx.queryEmpresaId) {
     return rows.filter(row => row.empresa_id === ctx.queryEmpresaId);
   }
-  if (ctx && ctx.permissions && ctx.permissions.super_admin && !ctx.empresaId) return rows;
+  if (ctx && ctx.permissions && ctx.permissions.super_admin) return rows;
   return rows.filter(row => row.empresa_id === (ctx && ctx.empresaId));
 }
 
@@ -95,7 +126,7 @@ function seedLocalData() {
     usuarios: [{
       id: userId,
       empresa_id: empresaId,
-      auth_user_id: null,
+      auth_user_id: 'demo-auth-user',
       nome: 'Admin Demo',
       email: 'admin@demo.local',
       funcao: 'Administrador',
@@ -156,6 +187,7 @@ function seedLocalData() {
     ia_agentes: [],
     templates_nicho: [],
     campos_personalizados: [],
+    feature_flags: [],
     assinaturas: []
   };
 }
@@ -193,8 +225,9 @@ class LocalStore {
       allowSensitive: resource && resource.allowSensitive,
       blockCompanyId: resource && resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)
     });
+    await this.assertTenantRelations(table, clean, ctx, resource);
     const row = { id: uuid(), ...clean, created_at: now(), updated_at: now() };
-    if (resource && resource.companyScoped) row.empresa_id = ctx.empresaId || clean.empresa_id;
+    if (resource && resource.companyScoped) row.empresa_id = clean.empresa_id || ctx.empresaId;
     data[table].push(row);
     this.write(data);
     return row;
@@ -210,6 +243,7 @@ class LocalStore {
       throw error;
     }
     const clean = sanitizePayload(payload, { allowSensitive: resource && resource.allowSensitive, blockCompanyId: true });
+    await this.assertTenantRelations(table, { ...rows[index], ...clean }, ctx, resource);
     rows[index] = { ...rows[index], ...clean, updated_at: now() };
     this.write(data);
     return rows[index];
@@ -232,7 +266,25 @@ class LocalStore {
   async findProfileByAuthUser(authUser) {
     const data = this.read();
     const email = authUser && authUser.email;
-    return (data.usuarios || []).find(user => (authUser.id && user.auth_user_id === authUser.id) || (email && user.email === email)) || null;
+    const byAuthId = (data.usuarios || []).find(user => authUser && authUser.id && user.auth_user_id === authUser.id);
+    if (byAuthId) return byAuthId;
+    if (!email || !emailProfileLinkAllowed()) return null;
+    const matches = (data.usuarios || []).filter(user => !user.auth_user_id && String(user.email || '').toLowerCase() === String(email).toLowerCase());
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  async assertTenantRelations(table, clean, ctx = {}, resource = {}) {
+    if (!resource.companyScoped || ctx.system) return;
+    const relations = TENANT_RELATIONS[table];
+    const empresaId = tenantForWrite(clean, ctx, resource);
+    if (!relations || !empresaId) return;
+    const data = this.read();
+    for (const [field, targetTable] of Object.entries(relations)) {
+      const id = clean[field];
+      if (!id) continue;
+      const row = (data[targetTable] || []).find(item => item.id === id);
+      if (!row || row.empresa_id !== empresaId) throw relationError(table, field);
+    }
   }
 
   async findApiKey(hash) {
@@ -337,6 +389,7 @@ class SupabaseStore {
       blockCompanyId: resource && resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)
     });
     if (resource.companyScoped && !clean.empresa_id && !ctx.system) clean.empresa_id = ctx.empresaId;
+    await this.assertTenantRelations(table, clean, ctx, resource);
     const data = await this.request(`/${table}`, {
       method: 'POST',
       headers: { Prefer: 'return=representation' },
@@ -347,6 +400,8 @@ class SupabaseStore {
 
   async update(table, id, payload, ctx = {}, resource = {}) {
     const clean = sanitizePayload(payload, { allowSensitive: resource && resource.allowSensitive, blockCompanyId: true });
+    const current = resource.companyScoped ? await this.get(table, id, ctx, resource) : null;
+    await this.assertTenantRelations(table, { ...(current || {}), ...clean }, ctx, resource);
     const params = new URLSearchParams();
     params.set('id', `eq.${id}`);
     if (resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)) params.set('empresa_id', `eq.${ctx.empresaId}`);
@@ -385,10 +440,35 @@ class SupabaseStore {
     const email = authUser && authUser.email;
     const params = new URLSearchParams();
     params.set('select', '*');
-    if (authUser && authUser.id) params.set('or', `(auth_user_id.eq.${authUser.id},email.eq.${email || ''})`);
-    else if (email) params.set('email', `eq.${email}`);
+    if (authUser && authUser.id) {
+      params.set('auth_user_id', `eq.${authUser.id}`);
+    } else if (email && emailProfileLinkAllowed()) {
+      params.set('email', `eq.${email}`);
+      params.set('auth_user_id', 'is.null');
+      params.set('limit', '2');
+    } else {
+      return null;
+    }
     const data = await this.request(`/usuarios?${params.toString()}`);
-    return data[0] || null;
+    return data.length === 1 ? data[0] : null;
+  }
+
+  async assertTenantRelations(table, clean, ctx = {}, resource = {}) {
+    if (!resource.companyScoped || ctx.system) return;
+    const relations = TENANT_RELATIONS[table];
+    const empresaId = tenantForWrite(clean, ctx, resource);
+    if (!relations || !empresaId) return;
+    for (const [field, targetTable] of Object.entries(relations)) {
+      const id = clean[field];
+      if (!id) continue;
+      const params = new URLSearchParams();
+      params.set('select', 'id,empresa_id');
+      params.set('id', `eq.${id}`);
+      params.set('limit', '1');
+      const rows = await this.request(`/${targetTable}?${params.toString()}`);
+      const row = rows && rows[0];
+      if (!row || row.empresa_id !== empresaId) throw relationError(table, field);
+    }
   }
 
   async findApiKey(hash) {

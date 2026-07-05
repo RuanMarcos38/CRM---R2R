@@ -323,10 +323,11 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
 }
 
 async function metaRequest(pathname, overrideConfig = {}) {
-  const token = overrideConfig.accessToken || overrideConfig.access_token || overrideConfig.token || overrideConfig.apiKey || overrideConfig.api_key || process.env.META_ACCESS_TOKEN;
+  const allowEnv = !overrideConfig.__disableEnv;
+  const token = overrideConfig.accessToken || overrideConfig.access_token || overrideConfig.token || overrideConfig.apiKey || overrideConfig.api_key || (allowEnv ? process.env.META_ACCESS_TOKEN : '');
   if (!token) return { ok: true, configured: false, data: null, message: 'META_ACCESS_TOKEN nao configurado.' };
   const separator = pathname.includes('?') ? '&' : '?';
-  const version = String(overrideConfig.graphVersion || overrideConfig.graph_version || process.env.META_GRAPH_VERSION || 'v20.0').replace(/^\/+/, '');
+  const version = String(overrideConfig.graphVersion || overrideConfig.graph_version || (allowEnv ? process.env.META_GRAPH_VERSION : '') || 'v20.0').replace(/^\/+/, '');
   const response = await fetchWithTimeout(`https://graph.facebook.com/${version}${pathname}${separator}access_token=${encodeURIComponent(token)}`);
   const data = await readJsonResponse(response);
   if (!response.ok) return { ok: false, configured: true, error: data.error && data.error.message || `HTTP ${response.status}`, raw: data };

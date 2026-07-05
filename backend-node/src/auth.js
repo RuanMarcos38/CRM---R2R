@@ -16,7 +16,7 @@ function bearerToken(req) {
 
 async function verifyWithSupabase(token) {
   const url = cleanUrl(process.env.SUPABASE_URL || process.env.SUPABASE_PUBLIC_URL || '');
-  const key = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || '';
+  const key = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
   if (!url || !key) return null;
 
   const response = await fetch(`${url}/auth/v1/user`, {
@@ -27,24 +27,45 @@ async function verifyWithSupabase(token) {
 }
 
 function permissionsFromProfile(profile) {
-  const tipo = String(profile && (profile.tipo_usuario || profile.tipo) || 'usuario')
+  const tipo = normalizeRole(profile && (profile.tipo_usuario || profile.tipo) || 'usuario');
+  const companyAdmin = ['company_admin', 'admin', 'administrador'].includes(tipo);
+  const manager = tipo === 'manager' || tipo === 'gestor';
+  const sales = ['atendente', 'comercial', 'vendedor', 'financeiro'].includes(tipo);
+  return {
+    tipo,
+    role: tipo,
+    admin: tipo === 'super_admin' || companyAdmin,
+    company_admin: companyAdmin,
+    super_admin: tipo === 'super_admin',
+    manager,
+    gestor: manager,
+    atendente: tipo === 'atendente',
+    comercial: tipo === 'comercial' || tipo === 'vendedor',
+    financeiro: tipo === 'financeiro' || companyAdmin || tipo === 'super_admin',
+    sales,
+    can_write: !['visualizador', 'limitado', 'viewer'].includes(tipo),
+    custom: profile && profile.permissoes || {}
+  };
+}
+
+function normalizeRole(value) {
+  const tipo = String(value || 'usuario')
     .trim()
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, '_');
-  const admin = ['super_admin', 'admin', 'administrador', 'gestor'].includes(tipo);
-  return {
-    tipo,
-    admin,
-    super_admin: tipo === 'super_admin',
-    gestor: tipo === 'gestor',
-    atendente: tipo === 'atendente',
-    comercial: tipo === 'comercial' || tipo === 'vendedor',
-    financeiro: tipo === 'financeiro' || admin,
-    can_write: tipo !== 'visualizador' && tipo !== 'limitado',
-    custom: profile && profile.permissoes || {}
-  };
+  return ({
+    administrador_da_empresa: 'company_admin',
+    administrador: 'administrador',
+    admin_empresa: 'company_admin',
+    empresa_admin: 'company_admin',
+    usuario_comum: 'usuario',
+    usuario: 'usuario',
+    gestor: 'manager',
+    gerente: 'manager',
+    visualizador: 'visualizador'
+  })[tipo] || tipo;
 }
 
 async function resolveAuthContext(req, store) {

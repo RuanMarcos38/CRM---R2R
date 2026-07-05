@@ -22,6 +22,15 @@ const { RESOURCES, resourceForPath } = require('./src/resources');
 const { buildReportsSummary } = require('./src/reports');
 const { normalizePlanId, publicBillingPlans, checkoutUrlForPlan, whatsappCheckoutFallback, saveBillingWebhookLog } = require('./src/billing');
 const { integrationStatus, openAIChat, normalizeEvolutionConfig, evolutionRequest, metaRequest, googleStatus } = require('./src/integrations');
+const {
+  assertFeatureEnabled,
+  assertResourceAccess,
+  apiKeyAllows,
+  featureForPath,
+  featureMap,
+  globalIntegrationFallbackAllowed,
+  isCompanyAdmin
+} = require('./src/access');
 
 const VERSION = '2026.06.29-saas';
 const PORT = Number(process.env.PORT || 3000);
@@ -201,10 +210,11 @@ async function getWhatsappIntegration(ctx) {
 async function getWhatsappConfig(ctx) {
   const row = await getWhatsappIntegration(ctx);
   const saved = row && row.config && typeof row.config === 'object' ? row.config : {};
+  const allowGlobal = globalIntegrationFallbackAllowed(ctx);
   const cfg = normalizeEvolutionConfig({
-    url: saved.url || process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || '',
-    key: saved.key || saved.apiKey || saved.api_key || saved.apikey || process.env.EVOLUTION_API_KEY || '',
-    instance: saved.instance || saved.inst || process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm'
+    url: saved.url || (allowGlobal ? process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || '' : ''),
+    key: saved.key || saved.apiKey || saved.api_key || saved.apikey || (allowGlobal ? process.env.EVOLUTION_API_KEY || '' : ''),
+    instance: saved.instance || saved.inst || (allowGlobal ? process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE : '') || 'r2r-crm'
   });
   return { ...cfg, source: row ? 'database' : 'env', row };
 }
@@ -220,6 +230,24 @@ function mergeWhatsappConfig(savedConfig, body) {
     key: inline.key || savedConfig.key || '',
     instance: inline.instance || savedConfig.instance || 'r2r-crm'
   });
+}
+
+function billingWebhookSecret() {
+  return String(process.env.BILLING_WEBHOOK_SECRET || process.env.PAYMENT_WEBHOOK_SECRET || '').trim();
+}
+
+function authorizeBillingWebhook(req, url) {
+  const secret = billingWebhookSecret();
+  if (!secret) {
+    return process.env.NODE_ENV !== 'production';
+  }
+  const provided = firstText(
+    req.headers['x-billing-secret'],
+    req.headers['x-webhook-secret'],
+    req.headers['x-payment-secret'],
+    url.searchParams.get('secret')
+  );
+  return provided && provided === secret;
 }
 
 function normalizeIntegrationType(value) {
@@ -255,10 +283,14 @@ async function getIntegrationConfig(ctx, type) {
   const normalized = normalizeIntegrationType(type);
   const rows = await store.list('integracoes', { 'eq.tipo': normalized, limit: 1 }, ctx, integrationResource()).catch(() => []);
   const row = Array.isArray(rows) && rows.length ? rows[0] : null;
+  const config = row && row.config && typeof row.config === 'object' ? row.config : {};
+  if (!row && !globalIntegrationFallbackAllowed(ctx)) {
+    return { type: normalized, row: null, config: { __disableEnv: true } };
+  }
   return {
     type: normalized,
     row,
-    config: row && row.config && typeof row.config === 'object' ? row.config : {}
+    config
   };
 }
 
@@ -267,6 +299,7 @@ async function saveIntegrationConfig(ctx, type, body) {
   const current = await getIntegrationConfig(ctx, normalized);
   const input = body && typeof body === 'object' ? body : {};
   const currentConfig = current && current.config && typeof current.config === 'object' ? current.config : {};
+  delete currentConfig.__disableEnv;
   const source = input.config && typeof input.config === 'object' ? { ...input.config, ...input } : { ...input };
   delete source.config;
   delete source.tipo;
@@ -467,7 +500,14 @@ async function authorizeEvolutionWebhook(req, url) {
   }
 
   const apiCtx = await verifyApiKey(req, store);
-  if (apiCtx) return apiCtx;
+  if (apiCtx) {
+    if (!apiKeyAllows(apiCtx, 'webhooks', 'inbound')) {
+      const error = new Error('API key sem permissao para webhooks.');
+      error.statusCode = 403;
+      throw error;
+    }
+    return apiCtx;
+  }
 
   const error = new Error('Configure EVOLUTION_WEBHOOK_SECRET ou envie x-api-key de uma empresa.');
   error.statusCode = 401;
@@ -484,11 +524,16 @@ async function resolveEvolutionContext(req, url, body) {
 
   if (!empresaId && instance) {
     const rows = await store.list('integracoes', { 'eq.tipo': 'whatsapp', limit: 500 }, { system: true }, integrationResource({ allowSensitive: true })).catch(() => []);
-    const found = rows.find(row => {
+    const matches = rows.filter(row => {
       const cfg = row.config && typeof row.config === 'object' ? row.config : {};
       return [cfg.instance, cfg.inst, cfg.instanceName].filter(Boolean).includes(instance);
     });
-    if (found) empresaId = found.empresa_id;
+    if (matches.length > 1) {
+      const error = new Error('Instancia Evolution vinculada a mais de uma empresa. Configure EVOLUTION_WEBHOOK_EMPRESA_ID ou use instancias unicas por empresa.');
+      error.statusCode = 409;
+      throw error;
+    }
+    if (matches.length === 1) empresaId = matches[0].empresa_id;
   } else if (!empresaId) {
     const rows = await store.list('integracoes', { 'eq.tipo': 'whatsapp', limit: 2 }, { system: true }, integrationResource({ allowSensitive: true })).catch(() => []);
     if (rows.length === 1) empresaId = rows[0].empresa_id;
@@ -536,8 +581,12 @@ async function handlePublic(req, res, url) {
   }
 
   if (key === 'POST /api/billing/webhook') {
+    if (!authorizeBillingWebhook(req, url)) {
+      return sendJson(req, res, 401, { ok: false, error: 'Webhook de cobranca nao autorizado.' });
+    }
     const body = await readBody(req);
     await store.insert('billing_webhooks', {
+      empresa_id: body.empresa_id || body.tenant_id || body.company_id || null,
       provider: process.env.PAYMENT_PROVIDER || 'checkout_link',
       event_type: body.event || body.type || body.status || 'unknown',
       payload: body,
@@ -552,14 +601,32 @@ async function handlePublic(req, res, url) {
 
 async function handleAuth(req, res, url, ctx) {
   if ((url.pathname === '/api/auth/profile' || url.pathname === '/api/me') && req.method === 'GET') {
+    const features = await featureMap(store, ctx);
     return sendJson(req, res, 200, {
       ok: true,
       success: true,
       user: ctx.user,
       profile: ctx.profile,
       empresa_id: ctx.empresaId,
-      permissions: ctx.permissions
+      permissions: ctx.permissions,
+      features
     });
+  }
+  if (url.pathname === '/api/features' && req.method === 'GET') {
+    return sendJson(req, res, 200, { ok: true, success: true, features: await featureMap(store, ctx) });
+  }
+  if (url.pathname === '/api/features' && (req.method === 'POST' || req.method === 'PUT')) {
+    if (!isCompanyAdmin(ctx)) return sendJson(req, res, 403, { ok: false, error: 'Somente Administrador da Empresa pode alterar funcionalidades.' });
+    const body = await readBody(req);
+    const featureName = String(body.feature_name || body.feature || body.name || '').trim();
+    if (!featureName) return sendJson(req, res, 400, { ok: false, error: 'Informe feature_name.' });
+    const current = await store.list('feature_flags', { 'eq.feature_name': featureName, limit: 1 }, ctx, RESOURCES.feature_flags).catch(() => []);
+    const payload = { feature_name: featureName, enabled: body.enabled !== false };
+    const row = current && current[0]
+      ? await store.update('feature_flags', current[0].id, payload, ctx, RESOURCES.feature_flags)
+      : await store.insert('feature_flags', payload, ctx, RESOURCES.feature_flags);
+    await audit(ctx, 'feature_flag_upsert', 'feature_flags', row && row.id, payload);
+    return sendJson(req, res, 200, { ok: true, success: true, data: row, features: await featureMap(store, ctx) });
   }
   return null;
 }
@@ -568,16 +635,11 @@ async function handleCrud(req, res, url, ctx) {
   const resource = resourceForPath(url.pathname);
   if (!resource) return null;
 
-  if (resource.adminOnly && !ctx.permissions.admin) {
-    return sendJson(req, res, 403, { ok: false, error: 'Permissao insuficiente.' });
-  }
+  assertResourceAccess(ctx, resource, req.method);
+  await assertFeatureEnabled(store, ctx, featureForPath(url.pathname, resource));
 
   if (resource.table === 'empresas' && !ctx.permissions.super_admin && resource.id && resource.id !== ctx.empresaId) {
     return sendJson(req, res, 403, { ok: false, error: 'Empresa fora do escopo do usuario.' });
-  }
-
-  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && !ctx.permissions.can_write) {
-    return sendJson(req, res, 403, { ok: false, error: 'Perfil sem permissao de escrita.' });
   }
 
   const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req) : {};
@@ -626,7 +688,7 @@ async function handleReports(req, res, url, ctx) {
 
 async function handleSettings(req, res, url, ctx) {
   if (url.pathname !== '/api/settings') return null;
-  if (!ctx.permissions.admin) return sendJson(req, res, 403, { ok: false, success: false, error: 'Somente admin pode alterar configuracoes.' });
+  if (!isCompanyAdmin(ctx)) return sendJson(req, res, 403, { ok: false, success: false, error: 'Somente Administrador da Empresa pode alterar configuracoes.' });
 
   const resource = RESOURCES.configuracoes;
   if (req.method === 'GET') {
@@ -647,6 +709,7 @@ async function handleSettings(req, res, url, ctx) {
         ? await store.update('configuracoes', current[0].id, payload, ctx, resource)
         : await store.insert('configuracoes', payload, ctx, resource));
     }
+    await audit(ctx, 'settings_update', 'configuracoes', null, body);
     return sendJson(req, res, 200, { ok: true, success: true, data: saved });
   }
 
@@ -689,6 +752,7 @@ async function handleFiles(req, res, url, ctx) {
       uploaded_by: ctx.profile && ctx.profile.id || null
     }, ctx, RESOURCES.arquivos);
 
+    await audit(ctx, 'file_upload', 'arquivos', row && row.id, { nome: originalName, mime_type: mimeType, size_bytes: upload.buffer.length });
     return sendJson(req, res, 201, { ok: true, success: true, data: safeData(row) });
   }
 
@@ -777,18 +841,22 @@ async function handleEvolutionWebhook(req, res, url) {
 
 async function handleIntegrations(req, res, url, ctx) {
   if (url.pathname === '/api/integrations/status' && req.method === 'GET') {
+    if (!isCompanyAdmin(ctx)) return sendJson(req, res, 403, { ok: false, error: 'Somente Administrador da Empresa pode consultar status de integracoes.' });
     return sendJson(req, res, 200, { ok: true, success: true, integrations: integrationStatus() });
   }
 
   const genericIntegrationType = integrationTypeFromPath(url.pathname);
   if (genericIntegrationType && !['whatsapp', 'evolution', 'google'].includes(genericIntegrationType)) {
+    const integrationFeature = ({ ai: 'ai', n8n: 'n8n', meta: 'meta_ads' })[genericIntegrationType] || '';
+    await assertFeatureEnabled(store, ctx, integrationFeature);
     if (req.method === 'GET') {
       const current = await getIntegrationConfig(ctx, genericIntegrationType);
       return sendJson(req, res, 200, publicIntegrationResponse(current.row, genericIntegrationType));
     }
     if (req.method === 'POST' || req.method === 'PUT') {
-      if (!ctx.permissions.admin) return sendJson(req, res, 403, { ok: false, success: false, error: 'Somente admin pode configurar integracoes.' });
+      if (!isCompanyAdmin(ctx)) return sendJson(req, res, 403, { ok: false, success: false, error: 'Somente Administrador da Empresa pode configurar integracoes.' });
       const row = await saveIntegrationConfig(ctx, genericIntegrationType, await readBody(req));
+      await audit(ctx, 'integration_save', 'integracoes', row && row.id, { type: genericIntegrationType });
       return sendJson(req, res, 200, {
         ...publicIntegrationResponse(row, genericIntegrationType),
         configured: true,
@@ -798,6 +866,7 @@ async function handleIntegrations(req, res, url, ctx) {
   }
 
   if (url.pathname === '/api/ai/test' && req.method === 'POST') {
+    await assertFeatureEnabled(store, ctx, 'ai');
     const ai = await getIntegrationConfig(ctx, 'ai');
     try {
       const out = await openAIChat('Responda apenas: IA conectada com sucesso.', [], { ...ctx, aiConfig: ai.config });
@@ -808,6 +877,7 @@ async function handleIntegrations(req, res, url, ctx) {
   }
 
   if (url.pathname === '/api/ai/chat' && req.method === 'POST') {
+    await assertFeatureEnabled(store, ctx, 'ai');
     const body = await readBody(req);
     let history = body.history || [];
     if (body.lead_id) {
@@ -851,6 +921,7 @@ async function handleIntegrations(req, res, url, ctx) {
   }
 
   if ((url.pathname === '/api/integrations/whatsapp' || url.pathname === '/api/integrations/evolution') && req.method === 'GET') {
+    await assertFeatureEnabled(store, ctx, 'whatsapp');
     const cfg = await getWhatsappConfig(ctx);
     return sendJson(req, res, 200, {
       ok: true,
@@ -868,9 +939,11 @@ async function handleIntegrations(req, res, url, ctx) {
   }
 
   if ((url.pathname === '/api/integrations/whatsapp' || url.pathname === '/api/integrations/evolution') && req.method === 'POST') {
-    if (!ctx.permissions.admin) return sendJson(req, res, 403, { ok: false, error: 'Somente admin pode configurar o WhatsApp.' });
+    await assertFeatureEnabled(store, ctx, 'whatsapp');
+    if (!isCompanyAdmin(ctx)) return sendJson(req, res, 403, { ok: false, error: 'Somente Administrador da Empresa pode configurar o WhatsApp.' });
     const row = await saveWhatsappConfig(ctx, await readBody(req));
     const cfg = row.config || {};
+    await audit(ctx, 'integration_save', 'integracoes', row && row.id, { type: 'whatsapp' });
     return sendJson(req, res, 200, {
       ok: true,
       success: true,
@@ -887,43 +960,51 @@ async function handleIntegrations(req, res, url, ctx) {
   }
 
   if (url.pathname === '/api/whatsapp/status' && req.method === 'GET') {
+    await assertFeatureEnabled(store, ctx, 'whatsapp');
     const cfg = await getWhatsappConfig(ctx);
     const result = await evolutionRequest('/instance/fetchInstances', 'GET', null, cfg);
     return sendJson(req, res, 200, result);
   }
 
   if (url.pathname === '/api/integrations/evolution/status' && req.method === 'GET') {
+    await assertFeatureEnabled(store, ctx, 'whatsapp');
     const cfg = await getWhatsappConfig(ctx);
     const result = await evolutionRequest('/instance/fetchInstances', 'GET', null, cfg);
     return sendJson(req, res, 200, result);
   }
 
   if ((url.pathname === '/api/whatsapp/connect' || url.pathname === '/api/integrations/evolution/connect') && req.method === 'POST') {
+    await assertFeatureEnabled(store, ctx, 'whatsapp');
     const body = await readBody(req);
-    if (hasInlineWhatsappConfig(body) && !ctx.permissions.admin) {
+    if (hasInlineWhatsappConfig(body) && !isCompanyAdmin(ctx)) {
       return sendJson(req, res, 403, { ok: false, success: false, error: 'Somente admin pode usar credenciais inline da Evolution API.' });
     }
     const savedCfg = await getWhatsappConfig(ctx);
     const cfg = hasInlineWhatsappConfig(body) ? mergeWhatsappConfig(savedCfg, body) : savedCfg;
     const result = await evolutionRequest('/instance/connect', 'POST', body, cfg);
+    await audit(ctx, 'whatsapp_connect', 'integracoes', savedCfg.row && savedCfg.row.id, { status: result.status, instance: cfg.instance });
     return sendJson(req, res, 200, result);
   }
 
   if (url.pathname === '/api/integrations/evolution/qrcode' && req.method === 'GET') {
+    await assertFeatureEnabled(store, ctx, 'whatsapp');
     const cfg = await getWhatsappConfig(ctx);
     const result = await evolutionRequest('/instance/connect', 'POST', {}, cfg);
     return sendJson(req, res, 200, result);
   }
 
   if ((url.pathname === '/api/whatsapp/disconnect' || url.pathname === '/api/integrations/evolution/disconnect') && req.method === 'POST') {
+    await assertFeatureEnabled(store, ctx, 'whatsapp');
     const body = await readBody(req);
     const cfg = await getWhatsappConfig(ctx);
     const instance = encodeURIComponent(body.instance || cfg.instance || 'r2r-crm');
     const result = await evolutionRequest(`/instance/logout/${instance}`, 'DELETE', null, cfg);
+    await audit(ctx, 'whatsapp_disconnect', 'integracoes', cfg.row && cfg.row.id, { status: result.status, instance: cfg.instance });
     return sendJson(req, res, 200, result);
   }
 
   if ((url.pathname === '/api/whatsapp/send' || url.pathname === '/api/messages/send') && req.method === 'POST') {
+    await assertFeatureEnabled(store, ctx, 'whatsapp');
     const body = await readBody(req);
     const text = String(body.text || body.message || '').trim();
     const number = String(body.number || body.telefone || body.phone || '').replace(/\D/g, '');
@@ -934,18 +1015,21 @@ async function handleIntegrations(req, res, url, ctx) {
       number,
       textMessage: { text }
     }, cfg);
+    await audit(ctx, 'whatsapp_send', 'mensagens', null, { number, status: result.status });
     return sendJson(req, res, 200, result);
   }
 
   if (url.pathname === '/api/meta/status' && req.method === 'GET') {
+    await assertFeatureEnabled(store, ctx, 'meta_ads');
     const meta = await getIntegrationConfig(ctx, 'meta');
     const result = await metaRequest('/me?fields=id,name', meta.config);
     return sendJson(req, res, 200, result);
   }
 
   if (url.pathname === '/api/meta/campaigns' && req.method === 'GET') {
+    await assertFeatureEnabled(store, ctx, 'meta_ads');
     const meta = await getIntegrationConfig(ctx, 'meta');
-    const accountId = meta.config.adAccountId || meta.config.ad_account_id || process.env.META_AD_ACCOUNT_ID || url.searchParams.get('account_id') || '';
+    const accountId = meta.config.adAccountId || meta.config.ad_account_id || (globalIntegrationFallbackAllowed(ctx) ? process.env.META_AD_ACCOUNT_ID : '') || '';
     if (!accountId) return sendJson(req, res, 200, { ok: true, configured: false, data: [], message: 'Configure META_AD_ACCOUNT_ID no backend.' });
     const fields = 'name,status,objective,daily_budget,lifetime_budget,insights{spend,reach,impressions,clicks,actions}';
     const result = await metaRequest(`/${encodeURIComponent(accountId)}/campaigns?fields=${encodeURIComponent(fields)}&limit=50`, meta.config);
@@ -957,8 +1041,10 @@ async function handleIntegrations(req, res, url, ctx) {
   }
 
   if (url.pathname === '/api/n8n/test' && req.method === 'POST') {
+    await assertFeatureEnabled(store, ctx, 'n8n');
+    if (!isCompanyAdmin(ctx)) return sendJson(req, res, 403, { ok: false, error: 'Somente Administrador da Empresa pode testar N8N.' });
     const n8n = await getIntegrationConfig(ctx, 'n8n');
-    const webhook = n8n.config.webhookUrl || n8n.config.webhook_url || n8n.config.webhook || process.env.N8N_WEBHOOK_URL || n8n.config.url || '';
+    const webhook = n8n.config.webhookUrl || n8n.config.webhook_url || n8n.config.webhook || (globalIntegrationFallbackAllowed(ctx) ? process.env.N8N_WEBHOOK_URL : '') || n8n.config.url || '';
     if (!webhook) return sendJson(req, res, 200, { ok: true, configured: false, message: 'N8N_WEBHOOK_URL nao configurado.' });
     const payload = { test: true, source: 'r2r-crm', empresa_id: ctx.empresaId, at: new Date().toISOString() };
     try {
@@ -974,6 +1060,7 @@ async function handleIntegrations(req, res, url, ctx) {
 
 async function handleBilling(req, res, url, ctx) {
   if (url.pathname === '/api/billing/checkout' && req.method === 'POST') {
+    await assertFeatureEnabled(store, ctx, 'billing');
     const body = await readBody(req);
     const planId = normalizePlanId(body.plan_id || body.plan || body.plano || body.name);
     if (!planId) return sendJson(req, res, 400, { ok: false, error: 'Plano invalido. Use starter, business ou premium.' });
@@ -990,6 +1077,7 @@ async function handleBilling(req, res, url, ctx) {
       status: configuredUrl ? 'checkout_created' : 'manual_checkout',
       checkout_url: checkoutUrl
     }, ctx, RESOURCES.assinaturas).catch(() => null);
+    await audit(ctx, 'billing_checkout', 'assinaturas', null, { plan_id: planId, configured: !!configuredUrl });
     return sendJson(req, res, 200, {
       ok: true,
       configured: !!configuredUrl,
@@ -1003,14 +1091,15 @@ async function handleBilling(req, res, url, ctx) {
 
 async function handleApiKeys(req, res, url, ctx) {
   if (url.pathname === '/api/api-keys' && req.method === 'POST') {
-    if (!ctx.permissions.admin) return sendJson(req, res, 403, { ok: false, error: 'Somente admin pode gerar API keys.' });
+    if (!isCompanyAdmin(ctx)) return sendJson(req, res, 403, { ok: false, error: 'Somente Administrador da Empresa pode gerar API keys.' });
     const body = await readBody(req);
     const created = await store.createApiKey(body.nome || body.name || 'Chave API', ctx);
+    await audit(ctx, 'api_key_create', 'api_keys', created.publicRow && created.publicRow.id, { nome: body.nome || body.name || 'Chave API' });
     return sendJson(req, res, 201, { ok: true, data: created.publicRow, api_key: created.plainText });
   }
 
   if (url.pathname === '/api/api-keys' && req.method === 'GET') {
-    if (!ctx.permissions.admin) return sendJson(req, res, 403, { ok: false, error: 'Somente admin pode listar API keys.' });
+    if (!isCompanyAdmin(ctx)) return sendJson(req, res, 403, { ok: false, error: 'Somente Administrador da Empresa pode listar API keys.' });
     const rows = await store.list('api_keys', {}, ctx, RESOURCES.api_keys);
     return sendJson(req, res, 200, { ok: true, data: rows.map(r => ({ ...r, key_hash: undefined })) });
   }
@@ -1021,6 +1110,7 @@ async function handleInboundWebhook(req, res, url) {
   if (!url.pathname.startsWith('/api/webhooks/inbound/') || req.method !== 'POST') return null;
   const ctx = await verifyApiKey(req, store);
   if (!ctx) return sendJson(req, res, 401, { ok: false, error: 'API key invalida.' });
+  if (!apiKeyAllows(ctx, 'webhooks', 'inbound')) return sendJson(req, res, 403, { ok: false, error: 'API key sem permissao para webhooks.' });
 
   const source = decodeURIComponent(url.pathname.replace('/api/webhooks/inbound/', '')) || 'webhook';
   const body = await readBody(req);

@@ -17,7 +17,7 @@ const RESOURCES = {
   atendimentos: { table: 'conversas', path: '/api/atendimentos', companyScoped: true, search: ['canal', 'wa_contact_id', 'ultima_mensagem', 'status'], defaultOrder: 'updated_at.desc' },
   mensagens: { table: 'mensagens', path: '/api/mensagens', companyScoped: true, defaultOrder: 'created_at.asc' },
   messages: { table: 'mensagens', path: '/api/messages', companyScoped: true, defaultOrder: 'created_at.asc' },
-  campanhas: { table: 'campanhas', path: '/api/campanhas', companyScoped: true, search: ['nome', 'canal', 'objetivo', 'status'], defaultOrder: 'created_at.desc' },
+  campanhas: { table: 'campanhas', path: '/api/campanhas', companyScoped: true, search: ['nome', 'canal', 'objetivo', 'status'], defaultOrder: 'created_at.desc', feature: 'meta_ads' },
   fontes_lead: { table: 'fontes_lead', path: '/api/fontes-lead', companyScoped: true, defaultOrder: 'nome.asc' },
   configuracoes: { table: 'configuracoes', path: '/api/configuracoes', companyScoped: true, adminOnly: true },
   integracoes: { table: 'integracoes', path: '/api/integracoes', companyScoped: true, adminOnly: true },
@@ -29,14 +29,15 @@ const RESOURCES = {
   lead_tags: { table: 'lead_tags', path: '/api/lead-tags', companyScoped: true },
   notificacoes: { table: 'notificacoes', path: '/api/notificacoes', companyScoped: true, defaultOrder: 'created_at.desc' },
   webhooks_logs: { table: 'webhooks_logs', path: '/api/webhooks-logs', companyScoped: true, adminOnly: true, defaultOrder: 'created_at.desc' },
-  billing_webhooks: { table: 'billing_webhooks', path: '/api/billing-webhooks', companyScoped: false, adminOnly: true, defaultOrder: 'created_at.desc' },
+  billing_webhooks: { table: 'billing_webhooks', path: '/api/billing-webhooks', companyScoped: false, adminOnly: true, superAdminOnly: true, defaultOrder: 'created_at.desc' },
   audit_logs: { table: 'audit_logs', path: '/api/audit-logs', companyScoped: true, adminOnly: true, defaultOrder: 'created_at.desc' },
   logs: { table: 'audit_logs', path: '/api/logs', companyScoped: true, adminOnly: true, defaultOrder: 'created_at.desc' },
   api_keys: { table: 'api_keys', path: '/api/api-keys', companyScoped: true, adminOnly: true, defaultOrder: 'created_at.desc' },
   permissoes: { table: 'permissoes', path: '/api/permissoes', companyScoped: true, adminOnly: true },
   ia_agentes: { table: 'ia_agentes', path: '/api/ia-agentes', companyScoped: true, adminOnly: true },
   templates_nicho: { table: 'templates_nicho', path: '/api/templates-nicho', companyScoped: false },
-  campos_personalizados: { table: 'campos_personalizados', path: '/api/campos-personalizados', companyScoped: true, adminOnly: true }
+  campos_personalizados: { table: 'campos_personalizados', path: '/api/campos-personalizados', companyScoped: true, adminOnly: true },
+  feature_flags: { table: 'feature_flags', path: '/api/feature-flags', companyScoped: true, adminOnly: true, defaultOrder: 'feature_name.asc' }
 };
 
 const PATHS = Object.values(RESOURCES).reduce((acc, resource) => {

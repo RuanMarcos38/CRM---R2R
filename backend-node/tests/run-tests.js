@@ -19,7 +19,8 @@ fs.rmSync(process.env.UPLOAD_DIR, { recursive: true, force: true });
 const { normalizePlanId } = require('../src/billing');
 const { resourceForPath } = require('../src/resources');
 const { sanitizePayload, stripSensitiveFields } = require('../src/security');
-const { applyFilters, seedLocalData } = require('../src/store');
+const { permissionsFromProfile } = require('../src/auth');
+const { applyFilters, seedLocalData, LocalStore } = require('../src/store');
 const { createServer } = require('../server');
 
 const tests = [];
@@ -103,7 +104,7 @@ test('migration contem tabelas minimas, RLS e indices', () => {
     'conversas', 'mensagens', 'campanhas', 'fontes_lead', 'integracoes',
     'automacoes', 'automacao_regras', 'arquivos', 'tags', 'lead_tags',
     'notificacoes', 'webhooks_logs', 'billing_webhooks', 'audit_logs',
-    'api_keys', 'permissoes'
+    'api_keys', 'permissoes', 'feature_flags'
   ].forEach(table => {
     assert.ok(sql.includes('public.' + table), 'missing table ' + table);
   });
@@ -118,6 +119,39 @@ test('migration contem tabelas minimas, RLS e indices', () => {
   assert.ok(sql.includes('idx_leads_empresa_created'));
   assert.ok(sql.includes('idx_integracoes_empresa_tipo'));
   assert.ok(sql.includes('idx_mensagens_empresa_external_unique'));
+  assert.ok(sql.includes('idx_usuarios_auth_user_id_unique'));
+  assert.ok(sql.includes('app_private.enforce_same_empresa'));
+});
+
+test('RBAC nao trata gestor como administrador da empresa', () => {
+  const gestor = permissionsFromProfile({ tipo_usuario: 'gestor' });
+  assert.strictEqual(gestor.manager, true);
+  assert.strictEqual(gestor.admin, false);
+  assert.strictEqual(gestor.company_admin, false);
+
+  const admin = permissionsFromProfile({ tipo_usuario: 'administrador' });
+  assert.strictEqual(admin.admin, true);
+  assert.strictEqual(admin.company_admin, true);
+});
+
+test('store local bloqueia relacoes entre empresas diferentes', async () => {
+  fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+  const local = new LocalStore();
+  const data = local.read();
+  const empresaA = data.empresas[0].id;
+  const empresaB = '00000000-0000-4000-8000-000000000002';
+  data.empresas.push({ id: empresaB, nome: 'Empresa B', status: 'ativo' });
+  data.leads.push({ id: '00000000-0000-4000-8000-000000000200', empresa_id: empresaB, nome: 'Lead B' });
+  local.write(data);
+
+  const ctxA = {
+    empresaId: empresaA,
+    permissions: { tipo: 'usuario', can_write: true, admin: false, super_admin: false }
+  };
+  await assert.rejects(
+    () => local.insert('arquivos', { nome: 'x.txt', path: 'x.txt', lead_id: '00000000-0000-4000-8000-000000000200' }, ctxA, { companyScoped: true }),
+    /Relacao invalida/
+  );
 });
 
 test('servidor responde health, login, rotas protegidas e Evolution sem config', async () => {
@@ -133,6 +167,12 @@ test('servidor responde health, login, rotas protegidas e Evolution sem config',
     out = await request(base, 'GET', '/api/health');
     assert.strictEqual(out.res.status, 200);
     assert.strictEqual(out.data.success, true);
+
+    const oldNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    out = await request(base, 'POST', '/api/billing/webhook', { event: 'fake' });
+    process.env.NODE_ENV = oldNodeEnv;
+    assert.strictEqual(out.res.status, 401);
 
     out = await request(base, 'POST', '/api/auth/login', { email: 'admin@demo.local', password: 'demo' });
     assert.strictEqual(out.res.status, 200);
@@ -235,6 +275,18 @@ test('servidor responde health, login, rotas protegidas e Evolution sem config',
     assert.strictEqual(out.res.status, 200);
     assert.strictEqual(out.data.configured, true);
     assert.strictEqual(out.data.config.has_token, true);
+
+    const localFile = path.join(process.env.DATA_DIR, 'r2r-crm-local.json');
+    const localData = JSON.parse(fs.readFileSync(localFile, 'utf8'));
+    localData.usuarios[0].tipo_usuario = 'administrador';
+    fs.writeFileSync(localFile, JSON.stringify(localData, null, 2));
+
+    out = await request(base, 'POST', '/api/features', { feature_name: 'meta_ads', enabled: false }, token);
+    assert.strictEqual(out.res.status, 200);
+    assert.strictEqual(out.data.features.meta_ads, false);
+
+    out = await request(base, 'GET', '/api/meta/campaigns', undefined, token);
+    assert.strictEqual(out.res.status, 403);
 
     out = await request(base, 'POST', '/api/files/upload', {
       nome: 'contrato.txt',

@@ -21,6 +21,7 @@
     configuracoes: '/api/configuracoes',
     integracoes: '/api/integracoes',
     automacoes: '/api/automacoes',
+    feature_flags: '/api/feature-flags',
     usuarios: '/api/usuarios',
     empresas: '/api/empresas',
     notificacoes: '/api/notificacoes',
@@ -144,6 +145,21 @@
       if (host.indexOf('crm.') === 0) add(window.location.protocol + '//api.' + host.slice(4));
     } catch (e) {}
     return list;
+  }
+
+  function allowDirectDataFallback() {
+    var env = String(window.R2R_CONFIG && window.R2R_CONFIG.ENV || '').toLowerCase();
+    var host = String(window.location && window.location.hostname || '').toLowerCase();
+    return window.R2R_ALLOW_DIRECT_SUPABASE_FALLBACK === true
+      || env === 'development'
+      || window.location.protocol === 'file:'
+      || host === 'localhost'
+      || host === '127.0.0.1';
+  }
+
+  function backendRequired(table, fallbackValue) {
+    toast('Backend/API indisponivel para ' + table + '. Em producao, os dados passam somente pelo backend.', 'error');
+    return fallbackValue;
   }
 
   function responseHeader(res, name) {
@@ -286,52 +302,56 @@
   window.checkBackendHealth = checkBackendHealth;
 
   window.sbQ = async function (table, select, opts) {
-    if (!window.R2R_BACKEND_READY && original.sbQ) return original.sbQ(table, select, opts || {});
+    if (!window.R2R_BACKEND_READY && original.sbQ && allowDirectDataFallback()) return original.sbQ(table, select, opts || {});
+    if (!window.R2R_BACKEND_READY && original.sbQ && !allowDirectDataFallback()) return backendRequired(table, []);
     try {
       var data = await apiFetch(endpointFor(table) + queryFor(select || '*', opts || {}));
       return data.data || [];
     } catch (error) {
       console.warn('[R2R API] sbQ fallback', table, error.message);
-      if (original.sbQ) return original.sbQ(table, select, opts || {});
+      if (original.sbQ && allowDirectDataFallback()) return original.sbQ(table, select, opts || {});
       toast('Erro ao carregar ' + table + ': ' + error.message, 'error');
       return [];
     }
   };
 
   window.sbIns = async function (table, payload) {
-    if (!window.R2R_BACKEND_READY && original.sbIns) return original.sbIns(table, payload || {});
+    if (!window.R2R_BACKEND_READY && original.sbIns && allowDirectDataFallback()) return original.sbIns(table, payload || {});
+    if (!window.R2R_BACKEND_READY && original.sbIns && !allowDirectDataFallback()) return backendRequired(table, null);
     try {
       var data = await apiFetch(endpointFor(table), { method: 'POST', body: JSON.stringify(payload || {}) });
       return data.data || null;
     } catch (error) {
       console.warn('[R2R API] sbIns fallback', table, error.message);
-      if (original.sbIns) return original.sbIns(table, payload || {});
+      if (original.sbIns && allowDirectDataFallback()) return original.sbIns(table, payload || {});
       toast('Erro ao salvar: ' + error.message, 'error');
       return null;
     }
   };
 
   window.sbUpd = async function (table, id, payload) {
-    if (!window.R2R_BACKEND_READY && original.sbUpd) return original.sbUpd(table, id, payload || {});
+    if (!window.R2R_BACKEND_READY && original.sbUpd && allowDirectDataFallback()) return original.sbUpd(table, id, payload || {});
+    if (!window.R2R_BACKEND_READY && original.sbUpd && !allowDirectDataFallback()) return backendRequired(table, false);
     try {
       await apiFetch(endpointFor(table) + '/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(payload || {}) });
       return true;
     } catch (error) {
       console.warn('[R2R API] sbUpd fallback', table, error.message);
-      if (original.sbUpd) return original.sbUpd(table, id, payload || {});
+      if (original.sbUpd && allowDirectDataFallback()) return original.sbUpd(table, id, payload || {});
       toast('Erro ao atualizar: ' + error.message, 'error');
       return false;
     }
   };
 
   window.sbDel = async function (table, id) {
-    if (!window.R2R_BACKEND_READY && original.sbDel) return original.sbDel(table, id);
+    if (!window.R2R_BACKEND_READY && original.sbDel && allowDirectDataFallback()) return original.sbDel(table, id);
+    if (!window.R2R_BACKEND_READY && original.sbDel && !allowDirectDataFallback()) return backendRequired(table, false);
     try {
       await apiFetch(endpointFor(table) + '/' + encodeURIComponent(id), { method: 'DELETE' });
       return true;
     } catch (error) {
       console.warn('[R2R API] sbDel fallback', table, error.message);
-      if (original.sbDel) return original.sbDel(table, id);
+      if (original.sbDel && allowDirectDataFallback()) return original.sbDel(table, id);
       toast('Erro ao excluir: ' + error.message, 'error');
       return false;
     }
@@ -899,6 +919,71 @@
       }).join('');
   };
 
+  function setPermissionsFromBackend(data) {
+    if (!data || !data.permissions) return;
+    var p = data.permissions || {};
+    window.PERMISSOES = Object.assign({}, window.PERMISSOES || {}, {
+      tipo: p.tipo || p.role || 'usuario',
+      role: p.role || p.tipo || 'usuario',
+      admin: !!p.admin,
+      super_admin: !!p.super_admin,
+      company_admin: !!p.company_admin,
+      manager: !!p.manager,
+      pode_criar: p.can_write !== false,
+      pode_editar: p.can_write !== false,
+      pode_excluir: !!(p.super_admin || p.company_admin || p.admin),
+      pode_config: !!(p.super_admin || p.company_admin || p.admin),
+      pode_usuarios: !!(p.super_admin || p.company_admin || p.admin)
+    });
+  }
+
+  function hideFeatureSelectors(feature, disabled) {
+    var map = {
+      meta_ads: ["[onclick*=\"showPage('metaads')\"]", '[onclick*="abrirModalMetaAds"]', '#page-metaads'],
+      whatsapp: ["[onclick*=\"showSettingsTab('whatsapp')\"]", '#tab-whatsapp', '#wa-panel-evo', '#wa-panel-meta', '#wa-panel-wtc'],
+      ai: ["[onclick*=\"showPage('ai')\"]", "[onclick*=\"showSettingsTab('ia')\"]", '#page-ai', '#tab-ia'],
+      n8n: ["[onclick*=\"showSettingsTab('n8n')\"]", "[onclick*=\"showSettingsTab('api')\"]", '#apiPanel-n8n'],
+      billing: ["[onclick*=\"showPage('financial')\"]", '#page-financial']
+    };
+    (map[feature] || []).forEach(function (selector) {
+      try {
+        document.querySelectorAll(selector).forEach(function (el) {
+          el.style.display = disabled ? 'none' : '';
+          el.setAttribute('data-feature-hidden', disabled ? feature : '');
+        });
+      } catch (e) {}
+    });
+  }
+
+  function applyFeatureFlagsUI(flags) {
+    window.R2R_FEATURES = Object.assign({}, window.R2R_FEATURES || {}, flags || {});
+    Object.keys(window.R2R_FEATURES).forEach(function (feature) {
+      hideFeatureSelectors(feature, window.R2R_FEATURES[feature] === false);
+    });
+  }
+
+  async function loadSecurityContext() {
+    try {
+      var data = await apiFetch('/api/me', { method: 'GET' });
+      setPermissionsFromBackend(data);
+      applyFeatureFlagsUI(data.features || {});
+      return data;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  window.carregarFeatureFlags = async function () {
+    try {
+      var data = await apiFetch('/api/features', { method: 'GET' });
+      applyFeatureFlagsUI(data.features || {});
+      return data.features || {};
+    } catch (error) {
+      console.warn('[R2R features]', error.message);
+      return {};
+    }
+  };
+
   document.addEventListener('DOMContentLoaded', async function () {
     clearFrontendSecrets();
     wireWhatsappTabs();
@@ -906,5 +991,7 @@
     await loadRuntimeConfig();
     window.R2R_BACKEND_READY = await backendReady();
     if (window.R2R_BACKEND_READY) console.log('[R2R] Backend bridge ativo');
+    if (window.R2R_BACKEND_READY) await loadSecurityContext();
+    setTimeout(function () { clearFrontendSecrets(); applyFeatureFlagsUI(window.R2R_FEATURES || {}); }, 1200);
   });
 })();

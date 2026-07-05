@@ -61,7 +61,7 @@ create table if not exists public.usuarios (
   email text not null,
   telefone text,
   funcao text,
-  tipo_usuario text not null default 'usuario' check (tipo_usuario in ('super_admin','admin','administrador','gestor','vendedor','comercial','atendente','financeiro','usuario','usuario_comum','limitado','visualizador')),
+  tipo_usuario text not null default 'usuario' check (tipo_usuario in ('super_admin','company_admin','admin','administrador','manager','gestor','vendedor','comercial','atendente','financeiro','usuario','usuario_comum','limitado','visualizador')),
   status text not null default 'ativo' check (status in ('ativo','inativo','bloqueado','pendente')),
   permissoes jsonb not null default '{}'::jsonb,
   ultimo_acesso timestamptz,
@@ -72,7 +72,7 @@ create table if not exists public.usuarios (
 
 alter table public.usuarios drop constraint if exists usuarios_tipo_usuario_check;
 alter table public.usuarios add constraint usuarios_tipo_usuario_check
-  check (tipo_usuario in ('super_admin','admin','administrador','gestor','vendedor','comercial','atendente','financeiro','usuario','usuario_comum','limitado','visualizador'));
+  check (tipo_usuario in ('super_admin','company_admin','admin','administrador','manager','gestor','vendedor','comercial','atendente','financeiro','usuario','usuario_comum','limitado','visualizador'));
 
 create table if not exists public.assinaturas (
   id uuid primary key default gen_random_uuid(),
@@ -434,6 +434,7 @@ create table if not exists public.webhooks_logs (
 
 create table if not exists public.billing_webhooks (
   id uuid primary key default gen_random_uuid(),
+  empresa_id uuid references public.empresas(id) on delete set null,
   provider text,
   event_type text,
   status text not null default 'received',
@@ -441,6 +442,9 @@ create table if not exists public.billing_webhooks (
   processed_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+alter table public.billing_webhooks
+  add column if not exists empresa_id uuid references public.empresas(id) on delete set null;
 
 create table if not exists public.audit_logs (
   id uuid primary key default gen_random_uuid(),
@@ -477,6 +481,17 @@ create table if not exists public.permissoes (
   modulos jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table if not exists public.feature_flags (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references public.empresas(id) on delete cascade,
+  feature_name text not null,
+  enabled boolean not null default true,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (empresa_id, feature_name)
 );
 
 create table if not exists public.ia_agentes (
@@ -626,7 +641,7 @@ set search_path = public, pg_temp
 as $$
   select app_private.has_empresa_role(
     target_empresa_id,
-    array['admin','administrador','gestor','vendedor','comercial','atendente','financeiro','usuario','usuario_comum']
+    array['company_admin','admin','administrador','manager','gestor','vendedor','comercial','atendente','financeiro','usuario','usuario_comum']
   );
 $$;
 
@@ -639,7 +654,7 @@ set search_path = public, pg_temp
 as $$
   select app_private.has_empresa_role(
     target_empresa_id,
-    array['admin','administrador','gestor']
+    array['company_admin','admin','administrador']
   );
 $$;
 
@@ -654,6 +669,92 @@ grant execute on function app_private.has_empresa_role(uuid, text[]) to authenti
 grant execute on function app_private.can_write_empresa(uuid) to authenticated, service_role;
 grant execute on function app_private.is_empresa_admin(uuid) to authenticated, service_role;
 
+create or replace function app_private.enforce_same_empresa()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  i integer;
+  field_name text;
+  target_table text;
+  target_id uuid;
+  target_empresa_id uuid;
+begin
+  if new.empresa_id is null then
+    return new;
+  end if;
+
+  i := 0;
+  while i < TG_NARGS loop
+    field_name := TG_ARGV[i];
+    target_table := TG_ARGV[i + 1];
+    execute format('select ($1).%I::uuid', field_name) using new into target_id;
+
+    if target_id is not null then
+      execute format('select empresa_id from public.%I where id = $1', target_table)
+        into target_empresa_id
+        using target_id;
+
+      if target_empresa_id is null or target_empresa_id <> new.empresa_id then
+        raise exception 'tenant mismatch on %.%', TG_TABLE_NAME, field_name using errcode = '42501';
+      end if;
+    end if;
+
+    i := i + 2;
+  end loop;
+
+  return new;
+end;
+$$;
+
+revoke all on function app_private.enforce_same_empresa() from public;
+
+drop trigger if exists trg_clientes_same_empresa on public.clientes;
+create trigger trg_clientes_same_empresa before insert or update on public.clientes
+for each row execute function app_private.enforce_same_empresa('lead_id','leads','responsavel_id','usuarios');
+
+drop trigger if exists trg_oportunidades_same_empresa on public.oportunidades;
+create trigger trg_oportunidades_same_empresa before insert or update on public.oportunidades
+for each row execute function app_private.enforce_same_empresa('lead_id','leads','cliente_id','clientes','responsavel_id','usuarios');
+
+drop trigger if exists trg_atividades_same_empresa on public.atividades;
+create trigger trg_atividades_same_empresa before insert or update on public.atividades
+for each row execute function app_private.enforce_same_empresa('lead_id','leads','cliente_id','clientes','usuario_id','usuarios');
+
+drop trigger if exists trg_tarefas_same_empresa on public.tarefas;
+create trigger trg_tarefas_same_empresa before insert or update on public.tarefas
+for each row execute function app_private.enforce_same_empresa('lead_id','leads','cliente_id','clientes','responsavel_id','usuarios');
+
+drop trigger if exists trg_conversas_same_empresa on public.conversas;
+create trigger trg_conversas_same_empresa before insert or update on public.conversas
+for each row execute function app_private.enforce_same_empresa('lead_id','leads','cliente_id','clientes','responsavel_id','usuarios');
+
+drop trigger if exists trg_mensagens_same_empresa on public.mensagens;
+create trigger trg_mensagens_same_empresa before insert or update on public.mensagens
+for each row execute function app_private.enforce_same_empresa('conversa_id','conversas','lead_id','leads','cliente_id','clientes','usuario_id','usuarios');
+
+drop trigger if exists trg_automacao_regras_same_empresa on public.automacao_regras;
+create trigger trg_automacao_regras_same_empresa before insert or update on public.automacao_regras
+for each row execute function app_private.enforce_same_empresa('automacao_id','automacoes');
+
+drop trigger if exists trg_arquivos_same_empresa on public.arquivos;
+create trigger trg_arquivos_same_empresa before insert or update on public.arquivos
+for each row execute function app_private.enforce_same_empresa('lead_id','leads','cliente_id','clientes','oportunidade_id','oportunidades','uploaded_by','usuarios');
+
+drop trigger if exists trg_lead_tags_same_empresa on public.lead_tags;
+create trigger trg_lead_tags_same_empresa before insert or update on public.lead_tags
+for each row execute function app_private.enforce_same_empresa('lead_id','leads','tag_id','tags');
+
+drop trigger if exists trg_notificacoes_same_empresa on public.notificacoes;
+create trigger trg_notificacoes_same_empresa before insert or update on public.notificacoes
+for each row execute function app_private.enforce_same_empresa('usuario_id','usuarios');
+
+drop trigger if exists trg_audit_logs_same_empresa on public.audit_logs;
+create trigger trg_audit_logs_same_empresa before insert or update on public.audit_logs
+for each row execute function app_private.enforce_same_empresa('usuario_id','usuarios');
+
 do $$
 declare
   t text;
@@ -662,7 +763,7 @@ begin
     'empresas','usuarios','assinaturas','funis','funil_etapas','leads','clientes','oportunidades',
     'atividades','tarefas','conversas','mensagens','campanhas','fontes_lead','configuracoes',
     'integracoes','automacoes','automacao_regras','arquivos','tags','lead_tags','notificacoes',
-    'webhooks_logs','audit_logs','api_keys','permissoes','ia_agentes','campos_personalizados'
+    'webhooks_logs','audit_logs','api_keys','permissoes','feature_flags','ia_agentes','campos_personalizados'
   ]
   loop
     execute format('alter table public.%I enable row level security', t);
@@ -746,7 +847,7 @@ begin
 
   foreach t in array array[
     'assinaturas','funis','funil_etapas','configuracoes','integracoes','automacoes',
-    'automacao_regras','webhooks_logs','audit_logs','api_keys','permissoes','ia_agentes',
+    'automacao_regras','webhooks_logs','audit_logs','api_keys','permissoes','feature_flags','ia_agentes',
     'campos_personalizados'
   ]
   loop
@@ -788,7 +889,7 @@ begin
   end loop;
 end $$;
 
-create index if not exists idx_usuarios_auth_user_id on public.usuarios(auth_user_id);
+create unique index if not exists idx_usuarios_auth_user_id_unique on public.usuarios(auth_user_id) where auth_user_id is not null;
 create index if not exists idx_usuarios_empresa_id on public.usuarios(empresa_id);
 create index if not exists idx_leads_empresa_created on public.leads(empresa_id, created_at desc);
 create index if not exists idx_leads_empresa_etapa on public.leads(empresa_id, etapa);
@@ -806,6 +907,7 @@ create unique index if not exists idx_mensagens_empresa_external_unique on publi
 create index if not exists idx_campanhas_empresa_status on public.campanhas(empresa_id, status);
 create index if not exists idx_integracoes_empresa_tipo on public.integracoes(empresa_id, tipo);
 create index if not exists idx_audit_empresa_created on public.audit_logs(empresa_id, created_at desc);
+create index if not exists idx_feature_flags_empresa_feature on public.feature_flags(empresa_id, feature_name);
 create index if not exists idx_api_keys_hash on public.api_keys(key_hash);
 create index if not exists idx_leads_tags_gin on public.leads using gin(tags);
 create index if not exists idx_leads_campos_extras_gin on public.leads using gin(campos_extras);
