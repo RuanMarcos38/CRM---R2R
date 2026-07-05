@@ -1,7 +1,41 @@
 const assert = require('assert');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const path = require('path');
+
+if (typeof fetch === 'undefined') {
+  global.fetch = function fetchPolyfill(target, options = {}) {
+    return new Promise((resolve, reject) => {
+      const url = new URL(target);
+      const client = url.protocol === 'https:' ? https : http;
+      const req = client.request(url, {
+        method: options.method || 'GET',
+        headers: options.headers || {}
+      }, res => {
+        const chunks = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          resolve({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode,
+            headers: { get: name => res.headers[String(name).toLowerCase()] || null },
+            text: async () => text
+          });
+        });
+      });
+      req.on('error', reject);
+      if (options.signal) {
+        options.signal.addEventListener('abort', () => {
+          req.destroy(new Error('The operation was aborted'));
+        }, { once: true });
+      }
+      if (options.body !== undefined) req.write(options.body);
+      req.end();
+    });
+  };
+}
 
 process.env.NODE_ENV = 'test';
 process.env.PORT = '0';
@@ -226,6 +260,54 @@ test('servidor responde health, login, rotas protegidas e Evolution sem config',
       assert.ok(out.data.qrcode.startsWith('data:image/png;base64,'));
     } finally {
       await new Promise(resolve => fakeEvolution.close(resolve));
+    }
+
+    const fakeEvolutionWithInstanceKey = http.createServer((req, res) => {
+      const apikey = req.headers.apikey;
+      if (req.url === '/instance/fetchInstances' && apikey === 'global-key') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify([
+          {
+            instance: {
+              instanceName: 'RuanMarcos',
+              status: 'close',
+              apikey: 'instance-key'
+            }
+          }
+        ]));
+        return;
+      }
+      if (req.url === '/instance/connect/RuanMarcos' && apikey === 'instance-key') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ base64: 'iVBORw0KGgo=', count: 1 }));
+        return;
+      }
+      if (req.url && req.url.startsWith('/instance/connect/')) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'Unauthorized' }));
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ message: 'Not found' }));
+    });
+    await new Promise(resolve => fakeEvolutionWithInstanceKey.listen(0, '127.0.0.1', resolve));
+    const fakeEvolutionWithInstanceKeyBase = 'http://127.0.0.1:' + fakeEvolutionWithInstanceKey.address().port;
+    try {
+      out = await request(base, 'POST', '/api/whatsapp/connect', {
+        url: fakeEvolutionWithInstanceKeyBase,
+        apiKey: 'global-key',
+        instance: 'Ruan Marcos'
+      }, token);
+      assert.strictEqual(out.res.status, 200);
+      assert.strictEqual(out.data.status, 'qrcode');
+      assert.strictEqual(out.data.instance, 'RuanMarcos');
+      assert.ok(out.data.attempts.some(attempt => attempt.auth_key_source === 'fetched_instance' && attempt.ok));
+
+      out = await request(base, 'GET', '/api/integrations/evolution/status', undefined, token);
+      assert.strictEqual(out.res.status, 200);
+      assert.ok(!JSON.stringify(out.data).includes('instance-key'));
+    } finally {
+      await new Promise(resolve => fakeEvolutionWithInstanceKey.close(resolve));
     }
 
     out = await request(base, 'POST', '/api/messages/send', { number: '5547999990000', text: 'Ola' }, token);
