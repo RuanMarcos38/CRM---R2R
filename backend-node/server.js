@@ -32,7 +32,7 @@ const {
   isCompanyAdmin
 } = require('./src/access');
 
-const VERSION = '2026.07.05-evolution-real-qr';
+const VERSION = '2026.07.05-evolution-env-network-fallback';
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
@@ -207,13 +207,49 @@ async function getWhatsappIntegration(ctx) {
   return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
+function evolutionEnvUrl() {
+  return cleanUrl(process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || '');
+}
+
+function evolutionEnvKey() {
+  return firstText(
+    process.env.EVOLUTION_API_KEY,
+    process.env.AUTHENTICATION_API_KEY,
+    process.env.EVOLUTION_AUTHENTICATION_API_KEY,
+    process.env.GLOBAL_API_KEY,
+    process.env.API_KEY
+  );
+}
+
+function evolutionEnvUsername() {
+  return firstText(
+    process.env.EVOLUTION_USERNAME,
+    process.env.EVOLUTION_USER,
+    process.env.AUTHENTICATION_USERNAME,
+    process.env.AUTH_USERNAME,
+    process.env.BASIC_AUTH_USER
+  );
+}
+
+function evolutionEnvPassword() {
+  return firstText(
+    process.env.EVOLUTION_PASSWORD,
+    process.env.EVOLUTION_PASS,
+    process.env.AUTHENTICATION_PASSWORD,
+    process.env.AUTH_PASSWORD,
+    process.env.BASIC_AUTH_PASSWORD
+  );
+}
+
 async function getWhatsappConfig(ctx) {
   const row = await getWhatsappIntegration(ctx);
   const saved = row && row.config && typeof row.config === 'object' ? row.config : {};
   const allowGlobal = globalIntegrationFallbackAllowed(ctx);
   const cfg = normalizeEvolutionConfig({
-    url: saved.url || (allowGlobal ? process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || '' : ''),
-    key: saved.key || saved.apiKey || saved.api_key || saved.apikey || (allowGlobal ? process.env.EVOLUTION_API_KEY || '' : ''),
+    url: saved.url || (allowGlobal ? evolutionEnvUrl() : ''),
+    key: saved.key || saved.apiKey || saved.api_key || saved.apikey || (allowGlobal ? evolutionEnvKey() : ''),
+    username: saved.username || saved.user || saved.login || (allowGlobal ? evolutionEnvUsername() : ''),
+    password: saved.password || saved.pass || saved.senha || (allowGlobal ? evolutionEnvPassword() : ''),
     instance: saved.instance || saved.inst || (allowGlobal ? process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE : '') || 'r2r-crm'
   });
   return { ...cfg, source: row ? 'database' : 'env', row };
@@ -222,28 +258,10 @@ async function getWhatsappConfig(ctx) {
 function getWhatsappEnvFallbackConfig(ctx, currentConfig = {}) {
   const canUseFallback = globalIntegrationFallbackAllowed(ctx) || isCompanyAdmin(ctx);
   if (!canUseFallback) return null;
-  const envUrl = cleanUrl(process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || '');
-  const envKey = firstText(
-    process.env.EVOLUTION_API_KEY,
-    process.env.AUTHENTICATION_API_KEY,
-    process.env.EVOLUTION_AUTHENTICATION_API_KEY,
-    process.env.GLOBAL_API_KEY,
-    process.env.API_KEY
-  );
-  const envUser = firstText(
-    process.env.EVOLUTION_USERNAME,
-    process.env.EVOLUTION_USER,
-    process.env.AUTHENTICATION_USERNAME,
-    process.env.AUTH_USERNAME,
-    process.env.BASIC_AUTH_USER
-  );
-  const envPassword = firstText(
-    process.env.EVOLUTION_PASSWORD,
-    process.env.EVOLUTION_PASS,
-    process.env.AUTHENTICATION_PASSWORD,
-    process.env.AUTH_PASSWORD,
-    process.env.BASIC_AUTH_PASSWORD
-  );
+  const envUrl = evolutionEnvUrl();
+  const envKey = evolutionEnvKey();
+  const envUser = evolutionEnvUsername();
+  const envPassword = evolutionEnvPassword();
   const currentUrl = cleanUrl(currentConfig.url || '');
   if (!envKey && !(envUser && envPassword)) return null;
   const cfg = normalizeEvolutionConfig({
@@ -261,9 +279,10 @@ function getWhatsappEnvFallbackConfig(ctx, currentConfig = {}) {
 function shouldRetryWhatsappWithEnv(result) {
   return !!(result && (
     result.status === 'auth_error' ||
+    result.status === 'unreachable' ||
     result.remote_status === 401 ||
     result.remote_status === 403 ||
-    /HTTP\s*(401|403)|recusou autenticacao/i.test(String(result.error || result.message || ''))
+    /HTTP\s*(401|403)|recusou autenticacao|inacessivel|inacessível|fetch failed|ECONN|ENOTFOUND|ETIMEDOUT/i.test(String(result.error || result.message || ''))
   ));
 }
 
