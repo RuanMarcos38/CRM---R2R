@@ -32,7 +32,7 @@ const {
   isCompanyAdmin
 } = require('./src/access');
 
-const VERSION = '2026.07.05-evolution-env-network-fallback';
+const VERSION = '2026.07.05-evolution-credential-merge';
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
@@ -280,9 +280,10 @@ function shouldRetryWhatsappWithEnv(result) {
   return !!(result && (
     result.status === 'auth_error' ||
     result.status === 'unreachable' ||
+    result.status === 'not_configured' ||
     result.remote_status === 401 ||
     result.remote_status === 403 ||
-    /HTTP\s*(401|403)|recusou autenticacao|inacessivel|inacessível|fetch failed|ECONN|ENOTFOUND|ETIMEDOUT/i.test(String(result.error || result.message || ''))
+    /HTTP\s*(401|403)|recusou autenticacao|nao configurad|não configurad|inacessivel|inacessível|fetch failed|ECONN|ENOTFOUND|ETIMEDOUT/i.test(String(result.error || result.message || ''))
   ));
 }
 
@@ -320,6 +321,8 @@ function mergeWhatsappConfig(savedConfig, body) {
   return normalizeEvolutionConfig({
     url: inline.url || savedConfig.url || '',
     key: inline.key || savedConfig.key || '',
+    username: inline.username || savedConfig.username || '',
+    password: inline.password || savedConfig.password || '',
     instance: inline.instance || savedConfig.instance || 'r2r-crm'
   });
 }
