@@ -122,14 +122,62 @@ function normalizeQrDataUrl(value) {
   return `data:image/png;base64,${qr}`;
 }
 
+function evolutionHeaders(cfg, variant = 'apikey') {
+  const headers = { 'Content-Type': 'application/json' };
+  if (variant === 'bearer') headers.Authorization = `Bearer ${cfg.key}`;
+  else if (variant === 'authorization') headers.Authorization = cfg.key;
+  else if (variant === 'x-api-key') headers['x-api-key'] = cfg.key;
+  else headers.apikey = cfg.key;
+  return headers;
+}
+
+function evolutionAuthError(response, data, cfg, attempts = []) {
+  const status = response && response.status || 401;
+  const remoteMessage = data && (data.message || data.error || data.raw) || `HTTP ${status}`;
+  return {
+    ok: false,
+    success: false,
+    configured: true,
+    connected: false,
+    status: 'auth_error',
+    error: `Evolution API recusou autenticacao (HTTP ${status}).`,
+    message: 'Evolution API recusou a API Key. Confira a API Key Global da Evolution no EasyPanel/CRM, salve novamente e tente conectar.',
+    instance: cfg && cfg.instance || 'r2r-crm',
+    remote_status: status,
+    remote_message: String(remoteMessage || '').slice(0, 300),
+    attempts
+  };
+}
+
+function evolutionHttpError(response, data, cfg, attempts = []) {
+  if (response && (response.status === 401 || response.status === 403)) {
+    return evolutionAuthError(response, data, cfg, attempts);
+  }
+  return {
+    ok: false,
+    success: false,
+    configured: true,
+    connected: false,
+    status: 'error',
+    error: data && (data.message || data.error) || `HTTP ${response && response.status}`,
+    raw: data
+  };
+}
+
 async function evolutionHttp(cfg, pathname, method = 'GET', body) {
-  const response = await fetchWithTimeout(cfg.url + pathname, {
-    method,
-    headers: { 'Content-Type': 'application/json', apikey: cfg.key },
-    body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body || {})
-  });
-  const data = await readJsonResponse(response);
-  return { response, data };
+  const variants = ['apikey', 'bearer', 'authorization', 'x-api-key'];
+  let last = null;
+  for (const variant of variants) {
+    const response = await fetchWithTimeout(cfg.url + pathname, {
+      method,
+      headers: evolutionHeaders(cfg, variant),
+      body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body || {})
+    });
+    const data = await readJsonResponse(response);
+    last = { response, data, auth_variant: variant };
+    if (response.status !== 401 && response.status !== 403) return last;
+  }
+  return last;
 }
 
 function evolutionNetworkError(error) {
@@ -228,9 +276,10 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
 
   if (pathname === '/instance/fetchInstances') {
     try {
-      const response = await fetchWithTimeout(cfg.url + pathname, { headers: { apikey: cfg.key } });
-      const data = await readJsonResponse(response);
-      if (!response.ok) return { ok: false, success: false, configured: true, connected: false, status: 'error', error: data.message || `HTTP ${response.status}` };
+      const { response, data, auth_variant } = await evolutionHttp(cfg, pathname, 'GET', null);
+      if (!response.ok) {
+        return evolutionHttpError(response, data, cfg, [{ route: pathname, method: 'GET', status: response.status, ok: false, auth_variant }]);
+      }
       const list = Array.isArray(data) ? data : [];
       const found = list.find(item =>
         item.name === cfg.instance ||
@@ -275,7 +324,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
         const out = await evolutionHttp(cfg, item.route, item.method, { instanceName: instance, instance });
         const qr = normalizeQrDataUrl(out.data);
         const pairingCode = extractPairingCode(out.data);
-        attempts.push({ route: item.route, method: item.method, status: out.response.status, ok: out.response.ok, data: out.data });
+        attempts.push({ route: item.route, method: item.method, status: out.response.status, ok: out.response.ok, auth_variant: out.auth_variant, data: out.data });
         if (out.response.ok && qr) {
           return { ok: true, success: true, configured: true, status: 'qrcode', instance, qrCode: qr, qrcode: qr, qr, pairing_code: pairingCode, route: item.route, raw: out.data, data: out.data };
         }
@@ -285,6 +334,27 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       } catch (error) {
         attempts.push({ route: item.route, method: item.method, error: error.message });
       }
+    }
+
+    const authFailure = attempts.find(attempt => {
+      const status = attempt.status || (attempt.response && attempt.response.status);
+      return status === 401 || status === 403;
+    });
+    if (authFailure) {
+      const authStatus = authFailure.status || (authFailure.response && authFailure.response.status);
+      return evolutionAuthError(
+        { status: authStatus },
+        authFailure.data || { message: authFailure.error || `HTTP ${authStatus}` },
+        { ...cfg, instance },
+        attempts.map(attempt => ({
+          route: attempt.route,
+          method: attempt.method,
+          status: attempt.status || (attempt.response && attempt.response.status) || null,
+          ok: attempt.ok || (attempt.response && attempt.response.ok) || false,
+          auth_variant: attempt.auth_variant || null,
+          error: attempt.error || null
+        }))
+      );
     }
 
     const failedAttempts = attempts.filter(attempt => attempt.error);
@@ -307,6 +377,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
         method: attempt.method,
         status: attempt.status || (attempt.response && attempt.response.status) || null,
         ok: attempt.ok || (attempt.response && attempt.response.ok) || false,
+        auth_variant: attempt.auth_variant || null,
         error: attempt.error || null
       }))
     };
@@ -314,7 +385,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
 
   try {
     const { response, data } = await evolutionHttp(cfg, path, method, body);
-    if (!response.ok) return { ok: false, success: false, configured: true, connected: false, status: 'error', error: data.message || data.error || `HTTP ${response.status}`, raw: data };
+    if (!response.ok) return evolutionHttpError(response, data, cfg, [{ route: path, method, status: response.status, ok: false }]);
     const qr = normalizeQrDataUrl(data);
     return { ok: true, success: true, configured: true, status: qr ? 'qrcode' : 'ok', qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(data), raw: data, data };
   } catch (error) {
