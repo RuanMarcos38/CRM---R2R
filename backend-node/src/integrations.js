@@ -236,12 +236,26 @@ function evolutionInstanceCandidates(value) {
   return [...new Set(candidates)];
 }
 
-function findEvolutionInstance(data, instance) {
-  const list = Array.isArray(data) ? data : [];
-  return list.find(item => {
+function evolutionInstanceList(data) {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.instances)) return data.instances;
+  if (data && Array.isArray(data.data)) return data.data;
+  return [];
+}
+
+function matchEvolutionInstance(data, instance) {
+  const list = evolutionInstanceList(data);
+  const byName = list.find(item => {
     const name = evolutionInstanceName(item);
     return name === instance || sameEvolutionInstanceName(name, instance);
   }) || null;
+  if (byName) return { item: byName, strategy: 'name' };
+  if (list.length === 1) return { item: list[0], strategy: 'single_instance' };
+  return { item: null, strategy: 'not_found' };
+}
+
+function findEvolutionInstance(data, instance) {
+  return matchEvolutionInstance(data, instance).item;
 }
 
 function remoteMessageFromEvolution(data) {
@@ -354,11 +368,15 @@ async function evolutionAuthProbe(overrideConfig = null) {
         remote_message: String(remoteMessage || '').slice(0, 220)
       });
       if (response.ok) {
-        const found = findEvolutionInstance(data, cfg.instance);
+        const selected = matchEvolutionInstance(data, cfg.instance);
+        const found = selected.item;
+        const detectedName = evolutionInstanceName(found);
         result.auth_variant = variant;
         result.status = response.status;
-        result.instance_count = Array.isArray(data) ? data.length : null;
+        result.instance_count = evolutionInstanceList(data).length;
         result.instance_found = !!found;
+        result.instance_match_strategy = selected.strategy;
+        if (detectedName) result.detected_instance = detectedName;
         result.instance_status = evolutionConnectionStatus(found);
         result.instance_has_apikey = !!evolutionInstanceApiKey(found);
         break;
@@ -522,9 +540,11 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       if (!response.ok) {
         return evolutionHttpError(response, data, cfg, [{ route: pathname, method: 'GET', status: response.status, ok: false, auth_variant }]);
       }
-      const found = findEvolutionInstance(data, cfg.instance);
+      const selected = matchEvolutionInstance(data, cfg.instance);
+      const found = selected.item;
       const status = evolutionConnectionStatus(found);
-      return { ok: true, success: true, configured: true, connected: status === 'open', status, instance: cfg.instance, data: found ? redactEvolutionSecrets(found) : null };
+      const foundName = evolutionInstanceName(found);
+      return { ok: true, success: true, configured: true, connected: status === 'open', status, instance: foundName || cfg.instance, instance_match_strategy: selected.strategy, data: found ? redactEvolutionSecrets(found) : null };
     } catch (error) {
       return evolutionNetworkError(error);
     }
@@ -537,7 +557,10 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
 
     try {
       const statusAttempt = await evolutionHttp(cfg, '/instance/fetchInstances', 'GET', null);
-      found = statusAttempt.response && statusAttempt.response.ok ? findEvolutionInstance(statusAttempt.data, instance) : null;
+      const selected = statusAttempt.response && statusAttempt.response.ok
+        ? matchEvolutionInstance(statusAttempt.data, instance)
+        : { item: null, strategy: 'not_found' };
+      found = selected.item;
       const foundName = evolutionInstanceName(found);
       const foundStatus = evolutionConnectionStatus(found);
       attempts.push({
@@ -548,6 +571,8 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
         auth_variant: statusAttempt.auth_variant,
         remote_message: remoteMessageFromEvolution(statusAttempt.data),
         instance_found: !!found,
+        instance_match_strategy: selected.strategy,
+        detected_instance: foundName || null,
         instance_status: foundStatus
       });
       if (foundName) instance = foundName;
