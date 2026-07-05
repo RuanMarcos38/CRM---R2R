@@ -189,9 +189,9 @@ async function qrDataUrlFromEvolutionCode(value) {
   const code = extractQrCodeText(value);
   if (!code || !QRCode || typeof QRCode.toDataURL !== 'function') return null;
   return QRCode.toDataURL(code, {
-    errorCorrectionLevel: 'M',
-    margin: 1,
-    width: 320,
+    errorCorrectionLevel: 'H',
+    margin: 4,
+    width: 640,
     color: {
       dark: '#000000',
       light: '#ffffff'

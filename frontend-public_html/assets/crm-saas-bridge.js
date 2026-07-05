@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.R2R_BRIDGE_VERSION = '20260704-full-backend';
+  window.R2R_BRIDGE_VERSION = '20260705-real-qr';
   console.log('[R2R] Backend bridge version', window.R2R_BRIDGE_VERSION);
 
   var TABLE_ENDPOINTS = {
@@ -527,15 +527,24 @@
     var img = new Image();
     img.onload = function () {
       if (els.canvas && els.canvas.getContext) {
-        els.canvas.width = 210;
-        els.canvas.height = 210;
-        els.canvas.getContext('2d').clearRect(0, 0, 210, 210);
-        els.canvas.getContext('2d').drawImage(img, 0, 0, 210, 210);
+        els.canvas.width = 260;
+        els.canvas.height = 260;
+        els.canvas.style.width = '260px';
+        els.canvas.style.height = '260px';
+        els.canvas.style.background = '#fff';
+        els.canvas.style.borderRadius = '0';
+        els.canvas.style.imageRendering = 'pixelated';
+        var ctx = els.canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, 260, 260);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, 260, 260);
+        ctx.drawImage(img, 0, 0, 260, 260);
         els.canvas.style.display = 'block';
         if (els.load) els.load.style.display = 'none';
       } else if (els.load) {
         els.load.style.display = 'flex';
-        els.load.innerHTML = '<img src="' + src + '" alt="QR Code WhatsApp" style="width:210px;height:210px;border-radius:8px">';
+        els.load.innerHTML = '<img src="' + src + '" alt="QR Code WhatsApp" style="width:260px;height:260px;border-radius:0;background:#fff;image-rendering:pixelated">';
       }
     };
     img.onerror = function () {
