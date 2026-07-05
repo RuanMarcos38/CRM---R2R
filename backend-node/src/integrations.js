@@ -25,6 +25,14 @@ function evolutionApiKeyFromEnv() {
   ]);
 }
 
+function evolutionInstanceApiKeyFromEnv() {
+  return envFirst([
+    'EVOLUTION_INSTANCE_API_KEY',
+    'EVOLUTION_INSTANCE_TOKEN',
+    'EVOLUTION_TOKEN'
+  ]);
+}
+
 function evolutionUsernameFromEnv() {
   return envFirst([
     'EVOLUTION_USERNAME',
@@ -201,6 +209,22 @@ function sameEvolutionInstanceName(a, b) {
   return clean(a) && clean(a) === clean(b);
 }
 
+function evolutionInstanceApiKey(item) {
+  if (!item || typeof item !== 'object') return '';
+  const direct = item.apikey || item.apiKey || item.api_key || item.token || item.accessToken || item.access_token;
+  if (direct) return String(direct).trim();
+  if (item.hash) {
+    const hashKey = item.hash.apikey || item.hash.apiKey || item.hash.api_key || item.hash.token;
+    if (hashKey) return String(hashKey).trim();
+  }
+  if (item.integration) {
+    const integrationKey = item.integration.apikey || item.integration.apiKey || item.integration.api_key || item.integration.token;
+    if (integrationKey) return String(integrationKey).trim();
+  }
+  if (item.instance) return evolutionInstanceApiKey(item.instance);
+  return '';
+}
+
 function evolutionInstanceCandidates(value) {
   const raw = String(value || '').trim();
   const compact = raw.replace(/\s+/g, '');
@@ -222,6 +246,34 @@ function findEvolutionInstance(data, instance) {
 
 function remoteMessageFromEvolution(data) {
   return String(data && (data.message || data.error || data.raw) || '').slice(0, 300);
+}
+
+function redactEvolutionSecrets(value, seen = new WeakSet()) {
+  if (!value || typeof value !== 'object') return value;
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+
+  if (Array.isArray(value)) return value.map(item => redactEvolutionSecrets(item, seen));
+
+  const redacted = {};
+  for (const [key, item] of Object.entries(value)) {
+    const normalized = key.toLowerCase().replace(/[_-]/g, '');
+    if ([
+      'apikey',
+      'apikeys',
+      'token',
+      'accesstoken',
+      'authorization',
+      'password',
+      'pass',
+      'senha'
+    ].includes(normalized)) {
+      redacted[key] = item ? '[redacted]' : item;
+    } else {
+      redacted[key] = redactEvolutionSecrets(item, seen);
+    }
+  }
+  return redacted;
 }
 
 function normalizeQrDataUrl(value) {
@@ -301,7 +353,16 @@ async function evolutionAuthProbe(overrideConfig = null) {
         status: response.status,
         remote_message: String(remoteMessage || '').slice(0, 220)
       });
-      if (response.ok) break;
+      if (response.ok) {
+        const found = findEvolutionInstance(data, cfg.instance);
+        result.auth_variant = variant;
+        result.status = response.status;
+        result.instance_count = Array.isArray(data) ? data.length : null;
+        result.instance_found = !!found;
+        result.instance_status = evolutionConnectionStatus(found);
+        result.instance_has_apikey = !!evolutionInstanceApiKey(found);
+        break;
+      }
     } catch (error) {
       result.attempts.push({
         auth_variant: variant,
@@ -418,6 +479,7 @@ function evolutionConfig() {
   return {
     url: cleanUrl(process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || ''),
     key: evolutionApiKeyFromEnv(),
+    instanceKey: evolutionInstanceApiKeyFromEnv(),
     username: evolutionUsernameFromEnv(),
     password: evolutionPasswordFromEnv(),
     instance: envFirst(['EVOLUTION_INSTANCE_NAME', 'EVOLUTION_INSTANCE']) || 'r2r-crm'
@@ -428,6 +490,7 @@ function normalizeEvolutionConfig(config = {}) {
   return {
     url: cleanUrl(config.url || config.evolution_url || ''),
     key: config.key || config.apiKey || config.api_key || config.apikey || '',
+    instanceKey: config.instanceKey || config.instance_key || config.instanceApiKey || config.instance_api_key || config.instanceToken || config.instance_token || '',
     username: config.username || config.user || config.login || '',
     password: config.password || config.pass || config.senha || '',
     instance: config.instance || config.inst || config.instanceName || 'r2r-crm'
@@ -461,7 +524,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       }
       const found = findEvolutionInstance(data, cfg.instance);
       const status = evolutionConnectionStatus(found);
-      return { ok: true, success: true, configured: true, connected: status === 'open', status, instance: cfg.instance, data: found || null };
+      return { ok: true, success: true, configured: true, connected: status === 'open', status, instance: cfg.instance, data: found ? redactEvolutionSecrets(found) : null };
     } catch (error) {
       return evolutionNetworkError(error);
     }
@@ -504,6 +567,16 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       attempts.push({ route: '/instance/fetchInstances', method: 'GET', error: error.message });
     }
 
+    const keyCandidates = [
+      { key: cfg.key, source: 'configured' },
+      { key: cfg.instanceKey, source: 'env_instance' },
+      { key: evolutionInstanceApiKey(found), source: 'fetched_instance' }
+    ].filter(item => item.key);
+    const uniqueKeyCandidates = [];
+    for (const item of keyCandidates) {
+      if (!uniqueKeyCandidates.some(existing => existing.key === item.key)) uniqueKeyCandidates.push(item);
+    }
+
     const candidateInstances = evolutionInstanceCandidates(found ? evolutionInstanceName(found) : instance);
     if (!found) evolutionInstanceCandidates(instance).forEach(candidate => {
       if (!candidateInstances.includes(candidate)) candidateInstances.push(candidate);
@@ -519,33 +592,38 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
     }
 
     for (const item of connectPaths) {
-      try {
-        const out = await evolutionHttp(cfg, item.route, item.method, { instanceName: item.instance, instance: item.instance });
-        const qr = normalizeQrDataUrl(out.data) || await qrDataUrlFromEvolutionCode(out.data);
-        const pairingCode = extractPairingCode(out.data);
-        attempts.push({
-          route: item.route,
-          method: item.method,
-          instance: item.instance,
-          status: out.response.status,
-          ok: out.response.ok,
-          auth_variant: out.auth_variant,
-          remote_message: remoteMessageFromEvolution(out.data),
-          data: out.data
-        });
-        if (out.response.ok && qr) {
-          return { ok: true, success: true, configured: true, status: 'qrcode', instance: item.instance, qrCode: qr, qrcode: qr, qr, pairing_code: pairingCode, route: item.route, raw: out.data, data: out.data, attempts };
+      for (const keyCandidate of uniqueKeyCandidates) {
+        try {
+          const requestCfg = { ...cfg, key: keyCandidate.key };
+          const out = await evolutionHttp(requestCfg, item.route, item.method, { instanceName: item.instance, instance: item.instance });
+          const qr = normalizeQrDataUrl(out.data) || await qrDataUrlFromEvolutionCode(out.data);
+          const pairingCode = extractPairingCode(out.data);
+          attempts.push({
+            route: item.route,
+            method: item.method,
+            instance: item.instance,
+            status: out.response.status,
+            ok: out.response.ok,
+            auth_variant: out.auth_variant,
+            auth_key_source: keyCandidate.source,
+            remote_message: remoteMessageFromEvolution(out.data)
+          });
+          if (out.response.ok && qr) {
+            return { ok: true, success: true, configured: true, status: 'qrcode', instance: item.instance, qrCode: qr, qrcode: qr, qr, pairing_code: pairingCode, route: item.route, raw: redactEvolutionSecrets(out.data), data: redactEvolutionSecrets(out.data), attempts };
+          }
+          if (out.response.ok && pairingCode) {
+            return { ok: true, success: true, configured: true, status: 'pairing_code', instance: item.instance, pairing_code: pairingCode, route: item.route, raw: redactEvolutionSecrets(out.data), data: redactEvolutionSecrets(out.data), message: 'A Evolution retornou codigo de pareamento, nao QR Code.', attempts };
+          }
+        } catch (error) {
+          attempts.push({ route: item.route, method: item.method, instance: item.instance, auth_key_source: keyCandidate.source, error: error.message });
         }
-        if (out.response.ok && pairingCode) {
-          return { ok: true, success: true, configured: true, status: 'pairing_code', instance: item.instance, pairing_code: pairingCode, route: item.route, raw: out.data, data: out.data, message: 'A Evolution retornou codigo de pareamento, nao QR Code.', attempts };
-        }
-      } catch (error) {
-        attempts.push({ route: item.route, method: item.method, instance: item.instance, error: error.message });
       }
     }
 
     const createInstance = candidateInstances.find(candidate => !/\s/.test(candidate)) || instance;
+    const createToken = cfg.instanceKey || cfg.key;
     const createPayload = { instanceName: createInstance, qrcode: true, integration: 'WHATSAPP-BAILEYS' };
+    if (createToken) createPayload.token = createToken;
     try {
       const createAttempt = { route: '/instance/create', method: 'POST', ...(await evolutionHttp(cfg, '/instance/create', 'POST', createPayload)) };
       createAttempt.status = createAttempt.response && createAttempt.response.status;
@@ -555,7 +633,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       attempts.push(createAttempt);
       const qr = normalizeQrDataUrl(createAttempt.data) || await qrDataUrlFromEvolutionCode(createAttempt.data);
       if (createAttempt.response && createAttempt.response.ok && qr) {
-        return { ok: true, success: true, configured: true, status: 'qrcode', instance: createInstance, qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(createAttempt.data), route: createAttempt.route, raw: createAttempt.data, data: createAttempt.data, attempts };
+        return { ok: true, success: true, configured: true, status: 'qrcode', instance: createInstance, qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(createAttempt.data), route: createAttempt.route, raw: redactEvolutionSecrets(createAttempt.data), data: redactEvolutionSecrets(createAttempt.data), attempts };
       }
     } catch (error) {
       attempts.push({ route: '/instance/create', method: 'POST', instance: createInstance, error: error.message });
@@ -579,6 +657,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
           status: attempt.status || (attempt.response && attempt.response.status) || null,
           ok: attempt.ok || (attempt.response && attempt.response.ok) || false,
           auth_variant: attempt.auth_variant || null,
+          auth_key_source: attempt.auth_key_source || null,
           remote_message: attempt.remote_message || null,
           error: attempt.error || null
         }))
@@ -609,6 +688,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
         status: attempt.status || (attempt.response && attempt.response.status) || null,
         ok: attempt.ok || (attempt.response && attempt.response.ok) || false,
         auth_variant: attempt.auth_variant || null,
+        auth_key_source: attempt.auth_key_source || null,
         remote_message: attempt.remote_message || null,
         error: attempt.error || null
       }))
@@ -619,7 +699,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
     const { response, data } = await evolutionHttp(cfg, path, method, body);
     if (!response.ok) return evolutionHttpError(response, data, cfg, [{ route: path, method, status: response.status, ok: false }]);
     const qr = normalizeQrDataUrl(data) || await qrDataUrlFromEvolutionCode(data);
-    return { ok: true, success: true, configured: true, status: qr ? 'qrcode' : 'ok', qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(data), raw: data, data };
+    return { ok: true, success: true, configured: true, status: qr ? 'qrcode' : 'ok', qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(data), raw: redactEvolutionSecrets(data), data: redactEvolutionSecrets(data) };
   } catch (error) {
     return evolutionNetworkError(error);
   }
