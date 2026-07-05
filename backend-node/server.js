@@ -32,7 +32,7 @@ const {
   isCompanyAdmin
 } = require('./src/access');
 
-const VERSION = '2026.07.05-evolution-env-url-fallback';
+const VERSION = '2026.07.05-evolution-basic-auth';
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
@@ -223,16 +223,38 @@ function getWhatsappEnvFallbackConfig(ctx, currentConfig = {}) {
   const canUseFallback = globalIntegrationFallbackAllowed(ctx) || isCompanyAdmin(ctx);
   if (!canUseFallback) return null;
   const envUrl = cleanUrl(process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || '');
-  const envKey = String(process.env.EVOLUTION_API_KEY || '').trim();
+  const envKey = firstText(
+    process.env.EVOLUTION_API_KEY,
+    process.env.AUTHENTICATION_API_KEY,
+    process.env.EVOLUTION_AUTHENTICATION_API_KEY,
+    process.env.GLOBAL_API_KEY,
+    process.env.API_KEY
+  );
+  const envUser = firstText(
+    process.env.EVOLUTION_USERNAME,
+    process.env.EVOLUTION_USER,
+    process.env.AUTHENTICATION_USERNAME,
+    process.env.AUTH_USERNAME,
+    process.env.BASIC_AUTH_USER
+  );
+  const envPassword = firstText(
+    process.env.EVOLUTION_PASSWORD,
+    process.env.EVOLUTION_PASS,
+    process.env.AUTHENTICATION_PASSWORD,
+    process.env.AUTH_PASSWORD,
+    process.env.BASIC_AUTH_PASSWORD
+  );
   const currentUrl = cleanUrl(currentConfig.url || '');
-  if (!envKey) return null;
+  if (!envKey && !(envUser && envPassword)) return null;
   const cfg = normalizeEvolutionConfig({
     url: envUrl || currentUrl,
     key: envKey,
+    username: envUser,
+    password: envPassword,
     instance: currentConfig.instance || process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm'
   });
-  if (!cfg.url || !cfg.key) return null;
-  if (cfg.url === currentConfig.url && cfg.key === currentConfig.key && cfg.instance === currentConfig.instance) return null;
+  if (!cfg.url || (!cfg.key && !(cfg.username && cfg.password))) return null;
+  if (cfg.url === currentConfig.url && cfg.key === currentConfig.key && cfg.username === currentConfig.username && cfg.password === currentConfig.password && cfg.instance === currentConfig.instance) return null;
   return { ...cfg, source: 'env_fallback', row: currentConfig.row || null };
 }
 

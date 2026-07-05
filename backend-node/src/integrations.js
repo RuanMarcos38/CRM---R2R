@@ -15,6 +15,41 @@ function envFirst(keys) {
   return '';
 }
 
+function evolutionApiKeyFromEnv() {
+  return envFirst([
+    'EVOLUTION_API_KEY',
+    'AUTHENTICATION_API_KEY',
+    'EVOLUTION_AUTHENTICATION_API_KEY',
+    'GLOBAL_API_KEY',
+    'API_KEY'
+  ]);
+}
+
+function evolutionUsernameFromEnv() {
+  return envFirst([
+    'EVOLUTION_USERNAME',
+    'EVOLUTION_USER',
+    'AUTHENTICATION_USERNAME',
+    'AUTH_USERNAME',
+    'BASIC_AUTH_USER'
+  ]);
+}
+
+function evolutionPasswordFromEnv() {
+  return envFirst([
+    'EVOLUTION_PASSWORD',
+    'EVOLUTION_PASS',
+    'AUTHENTICATION_PASSWORD',
+    'AUTH_PASSWORD',
+    'BASIC_AUTH_PASSWORD'
+  ]);
+}
+
+function basicAuthValue(username, password) {
+  if (!username || !password) return '';
+  return `Basic ${Buffer.from(`${username}:${password}`, 'utf8').toString('base64')}`;
+}
+
 function fetchTimeoutMs() {
   const value = Number(process.env.INTEGRATION_TIMEOUT_MS || 20_000);
   return Number.isFinite(value) && value > 0 ? value : 20_000;
@@ -31,13 +66,16 @@ async function fetchWithTimeout(url, options = {}) {
 }
 
 function integrationStatus() {
+  const evolutionKey = evolutionApiKeyFromEnv();
+  const evolutionUser = evolutionUsernameFromEnv();
+  const evolutionPassword = evolutionPasswordFromEnv();
   return {
     openai: {
       configured: !!process.env.OPENAI_API_KEY,
       model: process.env.OPENAI_MODEL || 'gpt-4o-mini'
     },
     evolution: {
-      configured: !!((process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL) && process.env.EVOLUTION_API_KEY),
+      configured: !!((process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL) && (evolutionKey || (evolutionUser && evolutionPassword))),
       instance: envFirst(['EVOLUTION_INSTANCE_NAME', 'EVOLUTION_INSTANCE']) || 'r2r-crm',
       webhook_configured: !!process.env.EVOLUTION_WEBHOOK_SECRET
     },
@@ -163,7 +201,8 @@ async function qrDataUrlFromEvolutionCode(value) {
 
 function evolutionHeaders(cfg, variant = 'apikey') {
   const headers = { 'Content-Type': 'application/json' };
-  if (variant === 'bearer') headers.Authorization = `Bearer ${cfg.key}`;
+  if (variant === 'basic') headers.Authorization = basicAuthValue(cfg.username, cfg.password);
+  else if (variant === 'bearer') headers.Authorization = `Bearer ${cfg.key}`;
   else if (variant === 'authorization') headers.Authorization = cfg.key;
   else if (variant === 'x-api-key') headers['x-api-key'] = cfg.key;
   else headers.apikey = cfg.key;
@@ -204,7 +243,9 @@ function evolutionHttpError(response, data, cfg, attempts = []) {
 }
 
 async function evolutionHttp(cfg, pathname, method = 'GET', body) {
-  const variants = ['apikey', 'bearer', 'authorization', 'x-api-key'];
+  const variants = [];
+  if (cfg.key) variants.push('apikey', 'bearer', 'authorization', 'x-api-key');
+  if (cfg.username && cfg.password) variants.push('basic');
   let last = null;
   for (const variant of variants) {
     const response = await fetchWithTimeout(cfg.url + pathname, {
@@ -216,7 +257,11 @@ async function evolutionHttp(cfg, pathname, method = 'GET', body) {
     last = { response, data, auth_variant: variant };
     if (response.status !== 401 && response.status !== 403) return last;
   }
-  return last;
+  return last || {
+    response: { ok: false, status: 401 },
+    data: { message: 'Nenhuma credencial da Evolution API disponivel.' },
+    auth_variant: 'none'
+  };
 }
 
 function evolutionNetworkError(error) {
@@ -281,7 +326,9 @@ async function openAIChat(message, history = [], ctx = {}) {
 function evolutionConfig() {
   return {
     url: cleanUrl(process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || ''),
-    key: process.env.EVOLUTION_API_KEY || '',
+    key: evolutionApiKeyFromEnv(),
+    username: evolutionUsernameFromEnv(),
+    password: evolutionPasswordFromEnv(),
     instance: envFirst(['EVOLUTION_INSTANCE_NAME', 'EVOLUTION_INSTANCE']) || 'r2r-crm'
   };
 }
@@ -290,13 +337,15 @@ function normalizeEvolutionConfig(config = {}) {
   return {
     url: cleanUrl(config.url || config.evolution_url || ''),
     key: config.key || config.apiKey || config.api_key || config.apikey || '',
+    username: config.username || config.user || config.login || '',
+    password: config.password || config.pass || config.senha || '',
     instance: config.instance || config.inst || config.instanceName || 'r2r-crm'
   };
 }
 
 async function evolutionRequest(pathname, method = 'GET', body, overrideConfig = null) {
   const cfg = normalizeEvolutionConfig({ ...evolutionConfig(), ...(overrideConfig || {}) });
-  if (!cfg.url || !cfg.key) {
+  if (!cfg.url || (!cfg.key && !(cfg.username && cfg.password))) {
     return {
       ok: true,
       success: false,
@@ -304,7 +353,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       connected: false,
       status: 'not_configured',
       instance: cfg.instance,
-      message: 'Evolution API nao configurada. Configure EVOLUTION_API_URL, EVOLUTION_API_KEY e EVOLUTION_INSTANCE.'
+      message: 'Evolution API nao configurada. Configure EVOLUTION_API_URL, EVOLUTION_API_KEY ou usuario/senha e EVOLUTION_INSTANCE.'
     };
   }
 
