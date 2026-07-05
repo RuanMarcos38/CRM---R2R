@@ -265,6 +265,7 @@ async function evolutionHttp(cfg, pathname, method = 'GET', body) {
 }
 
 function evolutionNetworkError(error) {
+  const detail = String(error && (error.code || error.cause && error.cause.code || error.message) || 'erro desconhecido').slice(0, 180);
   return {
     ok: false,
     success: false,
@@ -272,7 +273,8 @@ function evolutionNetworkError(error) {
     connected: false,
     status: 'unreachable',
     error: error && error.message || 'Falha ao acessar Evolution API.',
-    message: 'Evolution API inacessivel. Verifique se a URL esta com https://, se o dominio existe no EasyPanel e se a API esta online.'
+    error_detail: detail,
+    message: `Evolution API inacessivel pelo backend (${detail}). Verifique URL, DNS/rede do EasyPanel e se a API esta online.`
   };
 }
 
@@ -447,6 +449,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
 
     const failedAttempts = attempts.filter(attempt => attempt.error);
     const onlyErrors = attempts.length > 0 && failedAttempts.length === attempts.length;
+    const firstError = failedAttempts.find(attempt => attempt.error) || {};
     return {
       ok: true,
       success: false,
@@ -458,7 +461,7 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       qr: null,
       instance,
       message: onlyErrors
-        ? 'Evolution API inacessivel. Verifique a URL/domínio no EasyPanel e confirme se a API esta online.'
+        ? `Evolution API inacessivel pelo backend (${String(firstError.error || 'erro de rede').slice(0, 180)}). Verifique URL/dominio no EasyPanel e confirme se a API esta online.`
         : 'Evolution API respondeu, mas nao retornou QR Code. Verifique se a instancia ja esta conectada, se o nome da instancia esta correto ou consulte os detalhes no log.',
       attempts: attempts.map(attempt => ({
         route: attempt.route,

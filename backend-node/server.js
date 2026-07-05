@@ -32,7 +32,7 @@ const {
   isCompanyAdmin
 } = require('./src/access');
 
-const VERSION = '2026.07.05-evolution-credential-merge';
+const VERSION = '2026.07.05-evolution-diagnostics';
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
@@ -59,6 +59,54 @@ function healthPayload(req) {
       public_configured: !!(process.env.SUPABASE_URL && (process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY))
     }
   };
+}
+
+function safeUrlHost(value) {
+  try {
+    return value ? new URL(value).host : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+async function evolutionHealthProbe() {
+  const url = evolutionEnvUrl();
+  const instance = process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm';
+  const result = {
+    configured: !!url,
+    host: safeUrlHost(url),
+    has_api_key: !!evolutionEnvKey(),
+    has_basic_auth: !!(evolutionEnvUsername() && evolutionEnvPassword()),
+    instance,
+    root: null
+  };
+  if (!url) return result;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal
+    });
+    const text = await response.text().catch(() => '');
+    result.root = {
+      reachable: true,
+      ok: response.ok,
+      status: response.status,
+      content_type: response.headers.get('content-type') || '',
+      sample: text.slice(0, 220)
+    };
+  } catch (error) {
+    result.root = {
+      reachable: false,
+      error: String(error && (error.code || error.cause && error.cause.code || error.message) || 'erro desconhecido').slice(0, 220)
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+  return result;
 }
 
 async function readJsonResponse(response) {
@@ -652,7 +700,11 @@ async function handlePublic(req, res, url) {
   const key = routeKey(req.method, url.pathname);
 
   if (key === 'GET /health' || key === 'GET /healthz' || key === 'GET /api/health') {
-    return sendJson(req, res, 200, healthPayload(req));
+    const payload = healthPayload(req);
+    if (url.searchParams.get('probe') === 'evolution') {
+      payload.evolution_probe = await evolutionHealthProbe();
+    }
+    return sendJson(req, res, 200, payload);
   }
 
   if (key === 'GET /api/config') {
