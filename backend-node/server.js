@@ -32,7 +32,7 @@ const {
   isCompanyAdmin
 } = require('./src/access');
 
-const VERSION = '2026.07.05-evolution-instance-candidates';
+const VERSION = '2026.07.05-evolution-instance-key-fallback';
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
@@ -78,6 +78,7 @@ async function evolutionHealthProbe() {
     host: safeUrlHost(url),
     candidates: urls.map(safeUrlHost).filter(Boolean),
     has_api_key: !!evolutionEnvKey(),
+    has_instance_api_key: !!evolutionEnvInstanceKey(),
     has_basic_auth: !!(evolutionEnvUsername() && evolutionEnvPassword()),
     instance,
     root: null,
@@ -115,6 +116,7 @@ async function evolutionHealthProbe() {
       result.auth = await evolutionAuthProbe({
         url: candidate,
         key: evolutionEnvKey(),
+        instanceKey: evolutionEnvInstanceKey(),
         username: evolutionEnvUsername(),
         password: evolutionEnvPassword(),
         instance
@@ -299,6 +301,14 @@ function evolutionEnvKey() {
   );
 }
 
+function evolutionEnvInstanceKey() {
+  return firstText(
+    process.env.EVOLUTION_INSTANCE_API_KEY,
+    process.env.EVOLUTION_INSTANCE_TOKEN,
+    process.env.EVOLUTION_TOKEN
+  );
+}
+
 function evolutionEnvUsername() {
   return firstText(
     process.env.EVOLUTION_USERNAME,
@@ -331,6 +341,7 @@ async function getWhatsappConfig(ctx) {
   const cfg = normalizeEvolutionConfig({
     url: saved.url || (allowGlobal ? evolutionEnvUrl() : ''),
     key: forceEnv ? evolutionEnvKey() || saved.key || saved.apiKey || saved.api_key || saved.apikey || '' : saved.key || saved.apiKey || saved.api_key || saved.apikey || (allowGlobal ? evolutionEnvKey() : ''),
+    instanceKey: forceEnv ? evolutionEnvInstanceKey() || saved.instanceKey || saved.instance_key || saved.instanceApiKey || saved.instance_api_key || saved.instanceToken || saved.instance_token || '' : saved.instanceKey || saved.instance_key || saved.instanceApiKey || saved.instance_api_key || saved.instanceToken || saved.instance_token || (allowGlobal ? evolutionEnvInstanceKey() : ''),
     username: forceEnv ? evolutionEnvUsername() || saved.username || saved.user || saved.login || '' : saved.username || saved.user || saved.login || (allowGlobal ? evolutionEnvUsername() : ''),
     password: forceEnv ? evolutionEnvPassword() || saved.password || saved.pass || saved.senha || '' : saved.password || saved.pass || saved.senha || (allowGlobal ? evolutionEnvPassword() : ''),
     instance: saved.instance || saved.inst || (allowGlobal ? process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE : '') || 'r2r-crm'
@@ -343,19 +354,21 @@ function getWhatsappEnvFallbackConfigs(ctx, currentConfig = {}) {
   if (!canUseFallback) return [];
   const envUrls = evolutionEnvUrlCandidates(currentConfig.url);
   const envKey = evolutionEnvKey();
+  const envInstanceKey = evolutionEnvInstanceKey();
   const envUser = evolutionEnvUsername();
   const envPassword = evolutionEnvPassword();
-  if (!envKey && !(envUser && envPassword)) return [];
+  if (!envKey && !envInstanceKey && !(envUser && envPassword)) return [];
   return envUrls
     .map(url => normalizeEvolutionConfig({
       url,
       key: envKey,
+      instanceKey: envInstanceKey,
       username: envUser,
       password: envPassword,
       instance: currentConfig.instance || process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm'
     }))
-    .filter(cfg => cfg.url && (cfg.key || (cfg.username && cfg.password)))
-    .filter(cfg => !(cfg.url === currentConfig.url && cfg.key === currentConfig.key && cfg.username === currentConfig.username && cfg.password === currentConfig.password && cfg.instance === currentConfig.instance))
+    .filter(cfg => cfg.url && (cfg.key || cfg.instanceKey || (cfg.username && cfg.password)))
+    .filter(cfg => !(cfg.url === currentConfig.url && cfg.key === currentConfig.key && cfg.instanceKey === currentConfig.instanceKey && cfg.username === currentConfig.username && cfg.password === currentConfig.password && cfg.instance === currentConfig.instance))
     .map(cfg => ({ ...cfg, source: 'env_fallback', row: currentConfig.row || null }));
 }
 
