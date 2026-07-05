@@ -32,7 +32,7 @@ const {
   isCompanyAdmin
 } = require('./src/access');
 
-const VERSION = '2026.07.05-evolution-qr-code';
+const VERSION = '2026.07.05-evolution-env-fallback';
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
@@ -217,6 +217,50 @@ async function getWhatsappConfig(ctx) {
     instance: saved.instance || saved.inst || (allowGlobal ? process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE : '') || 'r2r-crm'
   });
   return { ...cfg, source: row ? 'database' : 'env', row };
+}
+
+function getWhatsappEnvFallbackConfig(ctx, currentConfig = {}) {
+  if (!globalIntegrationFallbackAllowed(ctx)) return null;
+  const cfg = normalizeEvolutionConfig({
+    url: process.env.EVOLUTION_API_URL || process.env.EVOLUTION_URL || currentConfig.url || '',
+    key: process.env.EVOLUTION_API_KEY || '',
+    instance: process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || currentConfig.instance || 'r2r-crm'
+  });
+  if (!cfg.url || !cfg.key) return null;
+  if (cfg.url === currentConfig.url && cfg.key === currentConfig.key && cfg.instance === currentConfig.instance) return null;
+  return { ...cfg, source: 'env_fallback', row: currentConfig.row || null };
+}
+
+function shouldRetryWhatsappWithEnv(result) {
+  return !!(result && (
+    result.status === 'auth_error' ||
+    result.remote_status === 401 ||
+    result.remote_status === 403 ||
+    /HTTP\s*(401|403)|recusou autenticacao/i.test(String(result.error || result.message || ''))
+  ));
+}
+
+async function evolutionRequestWithFallback(ctx, pathname, method = 'GET', body, cfg = null) {
+  const primaryCfg = cfg || await getWhatsappConfig(ctx);
+  const result = await evolutionRequest(pathname, method, body, primaryCfg);
+  if (!shouldRetryWhatsappWithEnv(result)) return result;
+
+  const fallbackCfg = getWhatsappEnvFallbackConfig(ctx, primaryCfg);
+  if (!fallbackCfg) return result;
+
+  const fallback = await evolutionRequest(pathname, method, body, fallbackCfg);
+  if (fallback && fallback.ok !== false) {
+    return {
+      ...fallback,
+      credential_source: 'env_fallback',
+      message: fallback.message || 'Evolution conectada usando a credencial global do backend.'
+    };
+  }
+  return {
+    ...result,
+    fallback_attempted: true,
+    fallback_error: fallback && (fallback.error || fallback.message) || 'Credencial global tambem falhou.'
+  };
 }
 
 function hasInlineWhatsappConfig(body) {
@@ -961,15 +1005,13 @@ async function handleIntegrations(req, res, url, ctx) {
 
   if (url.pathname === '/api/whatsapp/status' && req.method === 'GET') {
     await assertFeatureEnabled(store, ctx, 'whatsapp');
-    const cfg = await getWhatsappConfig(ctx);
-    const result = await evolutionRequest('/instance/fetchInstances', 'GET', null, cfg);
+    const result = await evolutionRequestWithFallback(ctx, '/instance/fetchInstances', 'GET', null);
     return sendJson(req, res, 200, result);
   }
 
   if (url.pathname === '/api/integrations/evolution/status' && req.method === 'GET') {
     await assertFeatureEnabled(store, ctx, 'whatsapp');
-    const cfg = await getWhatsappConfig(ctx);
-    const result = await evolutionRequest('/instance/fetchInstances', 'GET', null, cfg);
+    const result = await evolutionRequestWithFallback(ctx, '/instance/fetchInstances', 'GET', null);
     return sendJson(req, res, 200, result);
   }
 
@@ -981,15 +1023,14 @@ async function handleIntegrations(req, res, url, ctx) {
     }
     const savedCfg = await getWhatsappConfig(ctx);
     const cfg = hasInlineWhatsappConfig(body) ? mergeWhatsappConfig(savedCfg, body) : savedCfg;
-    const result = await evolutionRequest('/instance/connect', 'POST', body, cfg);
+    const result = await evolutionRequestWithFallback(ctx, '/instance/connect', 'POST', body, cfg);
     await audit(ctx, 'whatsapp_connect', 'integracoes', savedCfg.row && savedCfg.row.id, { status: result.status, instance: cfg.instance });
     return sendJson(req, res, 200, result);
   }
 
   if (url.pathname === '/api/integrations/evolution/qrcode' && req.method === 'GET') {
     await assertFeatureEnabled(store, ctx, 'whatsapp');
-    const cfg = await getWhatsappConfig(ctx);
-    const result = await evolutionRequest('/instance/connect', 'POST', {}, cfg);
+    const result = await evolutionRequestWithFallback(ctx, '/instance/connect', 'POST', {});
     return sendJson(req, res, 200, result);
   }
 
@@ -998,7 +1039,7 @@ async function handleIntegrations(req, res, url, ctx) {
     const body = await readBody(req);
     const cfg = await getWhatsappConfig(ctx);
     const instance = encodeURIComponent(body.instance || cfg.instance || 'r2r-crm');
-    const result = await evolutionRequest(`/instance/logout/${instance}`, 'DELETE', null, cfg);
+    const result = await evolutionRequestWithFallback(ctx, `/instance/logout/${instance}`, 'DELETE', null, cfg);
     await audit(ctx, 'whatsapp_disconnect', 'integracoes', cfg.row && cfg.row.id, { status: result.status, instance: cfg.instance });
     return sendJson(req, res, 200, result);
   }
@@ -1011,7 +1052,7 @@ async function handleIntegrations(req, res, url, ctx) {
     if (!number || !text) return sendJson(req, res, 400, { ok: false, success: false, error: 'Informe number/telefone e text/message.' });
     const cfg = await getWhatsappConfig(ctx);
     const instance = encodeURIComponent(body.instance || cfg.instance || 'r2r-crm');
-    const result = await evolutionRequest(`/message/sendText/${instance}`, 'POST', {
+    const result = await evolutionRequestWithFallback(ctx, `/message/sendText/${instance}`, 'POST', {
       number,
       textMessage: { text }
     }, cfg);
