@@ -1,7 +1,6 @@
-#!/usr/bin/env node
 const { createServer, VERSION } = require('./backend-node/server');
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 3333);
 const HOST = process.env.HOST || '0.0.0.0';
 
 if (require.main === module) {
