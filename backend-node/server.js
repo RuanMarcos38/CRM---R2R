@@ -647,6 +647,26 @@ function assertInsideRoot(root, target) {
   return resolvedTarget;
 }
 
+async function insertWithFallback(table, primaryPayload, fallbackPayload, ctx, resource, label) {
+  try {
+    return await store.insert(table, primaryPayload, ctx, resource);
+  } catch (error) {
+    if (!fallbackPayload) throw error;
+    console.warn(`[compat] ${label || table}: tentando payload legado (${error.message})`);
+    return store.insert(table, fallbackPayload, ctx, resource);
+  }
+}
+
+async function updateWithFallback(table, id, primaryPayload, fallbackPayload, ctx, resource, label) {
+  try {
+    return await store.update(table, id, primaryPayload, ctx, resource);
+  } catch (error) {
+    if (!fallbackPayload) throw error;
+    console.warn(`[compat] ${label || table}: tentando update legado (${error.message})`);
+    return store.update(table, id, fallbackPayload, ctx, resource);
+  }
+}
+
 function firstText(...values) {
   for (const value of values) {
     if (value === undefined || value === null) continue;
@@ -952,7 +972,7 @@ async function handleFiles(req, res, url, ctx) {
     fs.writeFileSync(absolutePath, upload.buffer, { flag: 'wx' });
 
     const relativePath = path.relative(root, absolutePath).replace(/\\/g, '/');
-    const row = await store.insert('arquivos', {
+    const row = await insertWithFallback('arquivos', {
       nome: originalName,
       path: relativePath,
       mime_type: mimeType,
@@ -961,7 +981,16 @@ async function handleFiles(req, res, url, ctx) {
       cliente_id: body.cliente_id || body.client_id || null,
       oportunidade_id: body.oportunidade_id || null,
       uploaded_by: ctx.profile && ctx.profile.id || null
-    }, ctx, RESOURCES.arquivos);
+    }, {
+      nome: originalName,
+      url: relativePath,
+      tipo: mimeType,
+      tamanho: upload.buffer.length,
+      lead_id: body.lead_id || null,
+      cliente_id: body.cliente_id || body.client_id || null,
+      conversa_id: body.conversa_id || body.conversation_id || null,
+      uploaded_by: ctx.profile && ctx.profile.id || null
+    }, ctx, RESOURCES.arquivos, 'file_upload');
 
     await audit(ctx, 'file_upload', 'arquivos', row && row.id, { nome: originalName, mime_type: mimeType, size_bytes: upload.buffer.length });
     return sendJson(req, res, 201, { ok: true, success: true, data: safeData(row) });
@@ -972,7 +1001,7 @@ async function handleFiles(req, res, url, ctx) {
     const row = await store.get('arquivos', decodeURIComponent(downloadMatch[1]), ctx, RESOURCES.arquivos);
     if (!row) return sendJson(req, res, 404, { ok: false, error: 'Arquivo nao encontrado.' });
     const root = uploadRoot();
-    const filePath = assertInsideRoot(root, path.join(root, row.path || ''));
+    const filePath = assertInsideRoot(root, path.join(root, row.path || row.url || ''));
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) return sendJson(req, res, 404, { ok: false, error: 'Arquivo fisico nao encontrado.' });
     return serveFile(req, res, filePath);
   }
@@ -998,7 +1027,7 @@ async function handleEvolutionWebhook(req, res, url) {
       const conversations = await store.list('conversas', { 'eq.external_id': parsed.remoteJid, limit: 1 }, ctx, RESOURCES.conversas).catch(() => []);
       let conversa = conversations && conversations[0];
       if (!conversa) {
-        conversa = await store.insert('conversas', {
+        conversa = await insertWithFallback('conversas', {
           canal: 'whatsapp',
           wa_contact_id: parsed.number || parsed.remoteJid,
           external_id: parsed.remoteJid,
@@ -1007,10 +1036,18 @@ async function handleEvolutionWebhook(req, res, url) {
           ultima_mensagem_em: new Date().toISOString(),
           nao_lidas: parsed.fromMe ? 0 : 1,
           metadata: { instance: parsed.instance, push_name: parsed.pushName }
-        }, ctx, RESOURCES.conversas);
+        }, {
+          canal: 'whatsapp',
+          wa_contact_id: parsed.number || parsed.remoteJid,
+          wa_thread_id: parsed.remoteJid,
+          status: 'aberta',
+          ultima_mensagem: parsed.text || `[${parsed.event}]`,
+          nao_lidas: parsed.fromMe ? 0 : 1,
+          metadata: { instance: parsed.instance, push_name: parsed.pushName, remote_jid: parsed.remoteJid }
+        }, ctx, RESOURCES.conversas, 'evolution_conversa');
       }
 
-      const mensagem = await store.insert('mensagens', {
+      const mensagem = await insertWithFallback('mensagens', {
         conversa_id: conversa.id,
         direcao: parsed.fromMe ? 'outbound' : 'inbound',
         canal: 'whatsapp',
@@ -1025,13 +1062,35 @@ async function handleEvolutionWebhook(req, res, url) {
           timestamp: parsed.timestamp,
           event: parsed.event
         }
-      }, ctx, RESOURCES.mensagens);
+      }, {
+        conversa_id: conversa.id,
+        autor_id: null,
+        direcao: parsed.fromMe ? 'outbound' : 'inbound',
+        tipo: parsed.text ? 'texto' : parsed.event,
+        conteudo: parsed.text || '',
+        lida: !!parsed.fromMe,
+        wa_message_id: parsed.externalId || null,
+        wa_msg_id: parsed.externalId || null,
+        external_id: parsed.externalId || null,
+        status_wa: parsed.fromMe ? 'sent' : 'received',
+        tipo_autor: parsed.fromMe ? 'usuario' : 'contato',
+        metadata: {
+          instance: parsed.instance,
+          remote_jid: parsed.remoteJid,
+          push_name: parsed.pushName,
+          timestamp: parsed.timestamp,
+          event: parsed.event
+        }
+      }, ctx, RESOURCES.mensagens, 'evolution_mensagem');
 
-      await store.update('conversas', conversa.id, {
+      await updateWithFallback('conversas', conversa.id, {
         ultima_mensagem: parsed.text || conversa.ultima_mensagem || `[${parsed.event}]`,
         ultima_mensagem_em: new Date().toISOString(),
         nao_lidas: parsed.fromMe ? Number(conversa.nao_lidas || 0) : Number(conversa.nao_lidas || 0) + 1
-      }, ctx, RESOURCES.conversas).catch(() => null);
+      }, {
+        ultima_mensagem: parsed.text || conversa.ultima_mensagem || `[${parsed.event}]`,
+        nao_lidas: parsed.fromMe ? Number(conversa.nao_lidas || 0) : Number(conversa.nao_lidas || 0) + 1
+      }, ctx, RESOURCES.conversas, 'evolution_conversa_update').catch(() => null);
 
       result.message_saved = true;
       result.mensagem_id = mensagem && mensagem.id;
@@ -1229,7 +1288,7 @@ async function handleIntegrations(req, res, url, ctx) {
     if (conversaId) {
       const sentAt = new Date().toISOString();
       const deliveryStatus = result.configured === false ? 'not_configured' : (result.ok && result.success !== false ? 'sent' : 'failed');
-      messageRow = await store.insert('mensagens', {
+      messageRow = await insertWithFallback('mensagens', {
         conversa_id: conversaId,
         lead_id: body.lead_id || null,
         cliente_id: body.cliente_id || body.client_id || null,
@@ -1245,14 +1304,31 @@ async function handleIntegrations(req, res, url, ctx) {
           integration_status: result.status || null,
           configured: result.configured !== false
         }
-      }, ctx, RESOURCES.mensagens).catch(error => {
+      }, {
+        conversa_id: conversaId,
+        autor_id: ctx.profile && ctx.profile.id || null,
+        direcao: 'outbound',
+        tipo: 'texto',
+        conteudo: text,
+        lida: true,
+        status_wa: deliveryStatus,
+        tipo_autor: 'usuario',
+        metadata: {
+          number,
+          backend_route: url.pathname,
+          integration_status: result.status || null,
+          configured: result.configured !== false
+        }
+      }, ctx, RESOURCES.mensagens, 'whatsapp_send_mensagem').catch(error => {
         console.warn('[whatsapp_send] mensagem nao persistida:', error.message);
         return null;
       });
-      await store.update('conversas', conversaId, {
+      await updateWithFallback('conversas', conversaId, {
         ultima_mensagem: text.slice(0, 160),
         ultima_mensagem_em: sentAt
-      }, ctx, RESOURCES.conversas).then(() => {
+      }, {
+        ultima_mensagem: text.slice(0, 160)
+      }, ctx, RESOURCES.conversas, 'whatsapp_send_conversa').then(() => {
         conversationUpdated = true;
       }).catch(error => {
         console.warn('[whatsapp_send] conversa nao atualizada:', error.message);
