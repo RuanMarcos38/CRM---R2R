@@ -4,7 +4,7 @@ const { corsHeaders, securityHeaders } = require('./security');
 const { numberEnv } = require('./env');
 
 function jsonLimit() {
-  return numberEnv('JSON_BODY_LIMIT_BYTES', 2_000_000);
+  return numberEnv('JSON_BODY_LIMIT_BYTES', 15_000_000);
 }
 
 function cleanUrl(value) {
