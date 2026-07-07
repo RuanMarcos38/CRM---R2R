@@ -381,6 +381,28 @@
         localStorage.setItem('r2r_ia_cfg', JSON.stringify(ia));
       }
     } catch (e) {}
+    try {
+      var meta = JSON.parse(localStorage.getItem('r2r_meta_ads') || '{}');
+      if (meta.token || meta.accessToken || meta.access_token || meta.apiKey || meta.api_key) {
+        delete meta.token;
+        delete meta.accessToken;
+        delete meta.access_token;
+        delete meta.apiKey;
+        delete meta.api_key;
+        localStorage.setItem('r2r_meta_ads', JSON.stringify(meta));
+      }
+    } catch (e) {}
+    try {
+      var metaWa = JSON.parse(localStorage.getItem('r2r_wa_meta') || '{}');
+      if (metaWa.token || metaWa.accessToken || metaWa.access_token || metaWa.apiKey || metaWa.api_key) {
+        delete metaWa.token;
+        delete metaWa.accessToken;
+        delete metaWa.access_token;
+        delete metaWa.apiKey;
+        delete metaWa.api_key;
+        localStorage.setItem('r2r_wa_meta', JSON.stringify(metaWa));
+      }
+    } catch (e) {}
   }
 
   async function loadRuntimeConfig() {
