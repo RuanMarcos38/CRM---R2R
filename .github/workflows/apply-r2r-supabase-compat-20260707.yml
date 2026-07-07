@@ -1,0 +1,51 @@
+name: Apply R2R Supabase Compat 20260707
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "tools/apply-r2r-supabase-compat-20260707.js"
+      - ".github/workflows/apply-r2r-supabase-compat-20260707.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-compat:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Apply Supabase schema compatibility hotfix
+        run: node tools/apply-r2r-supabase-compat-20260707.js
+
+      - name: Validate syntax and tests
+        run: |
+          npm run check
+          npm test
+
+      - name: Commit generated compatibility hotfix
+        run: |
+          if git diff --quiet; then
+            echo "No generated changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend-node/server.js
+          git commit -m "fix: support current Supabase CRM schema"
+          git push
