@@ -1,9 +1,15 @@
 // R2R CRM SaaS - configuracao publica do frontend.
 // Nunca coloque aqui service_role, OpenAI key, Evolution key, Meta token,
 // N8N key ou qualquer segredo. No navegador ficam apenas URLs publicas.
+//
+// IMPORTANTE:
+// API_BASE_URL fica vazio por padrao para evitar travar o CRM em uma URL antiga.
+// A URL correta vem do backend via /api/config, do localStorage ou da deteccao
+// crm.seudominio.com.br -> api.seudominio.com.br feita pelo bridge.
 
 window.R2R_CONFIG = Object.assign({
-  API_BASE_URL: 'https://api.r2rmarketingdigital.com.br',
+  API_BASE_URL: '',
+  API_FALLBACK_URLS: ['https://api.r2rmarketingdigital.com.br'],
   APP_NAME: 'R2R CRM',
   ENV: 'production',
   SUPABASE_URL: '',
@@ -16,7 +22,7 @@ window.R2R_SUPABASE_PUBLISHABLE_KEY = window.R2R_SUPABASE_PUBLISHABLE_KEY || win
 window.R2R_SUPABASE_ANON_KEY = window.R2R_SUPABASE_ANON_KEY || window.R2R_SUPABASE_PUBLISHABLE_KEY;
 var r2rStoredApiBase = '';
 try { r2rStoredApiBase = localStorage.getItem('r2r_api_base') || ''; } catch (e) {}
-window.R2R_API_BASE = (window.R2R_API_BASE || window.R2R_CONFIG.API_BASE_URL || r2rStoredApiBase || '').replace(/\/$/, '');
+window.R2R_API_BASE = (window.R2R_API_BASE || r2rStoredApiBase || window.R2R_CONFIG.API_BASE_URL || '').replace(/\/$/, '');
 window.R2R_REAL_MODE = true;
 
 try {
