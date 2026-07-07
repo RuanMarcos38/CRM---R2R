@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.R2R_BRIDGE_VERSION = '20260705-real-qr';
+  window.R2R_BRIDGE_VERSION = '20260707-safe-backend-actions';
   console.log('[R2R] Backend bridge version', window.R2R_BRIDGE_VERSION);
 
   var TABLE_ENDPOINTS = {
@@ -481,6 +481,33 @@
     });
   }
 
+  function activeConversation() {
+    var conv = window.CONV_ATIVA || null;
+    if (conv && typeof conv === 'object') return conv;
+    var id = window.CONV_ATIVA_ID || window.convAtivaId || '';
+    var list = window._conversas || window.conversas || [];
+    if (id && Array.isArray(list)) {
+      for (var i = 0; i < list.length; i += 1) {
+        if (String(list[i] && list[i].id || '') === String(id)) return list[i];
+      }
+    }
+    return conv && typeof conv === 'string' ? { id: conv } : null;
+  }
+
+  function phoneFromConversation(conv) {
+    conv = conv || {};
+    return String(conv.wa_contact_id || conv.telefone || conv.phone || conv.numero || conv.lead_telefone || conv.cliente_telefone || '').replace(/\D/g, '');
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(String(reader.result || '')); };
+      reader.onerror = function () { reject(reader.error || new Error('Nao foi possivel ler o arquivo.')); };
+      reader.readAsDataURL(file);
+    });
+  }
+
   function qrElements() {
     var canvas = byId('waCanvas') || byId('waQrCanvas');
     var load = byId('waLoading') || byId('waQrLoading');
@@ -870,6 +897,123 @@
 
   window.salvarWhatickConfig = async function () {
     toast('Token do Whaticket deve ficar no backend ou em cofre de segredos. O frontend nao persiste esse token.', 'info');
+  };
+
+  window.enviarWAMsg = async function (numero, texto, extra) {
+    numero = String(numero || '').replace(/\D/g, '');
+    texto = String(texto || '').trim();
+    if (!numero || !texto) return null;
+    return apiFetch('/api/whatsapp/send', {
+      method: 'POST',
+      body: JSON.stringify(Object.assign({ number: numero, text: texto }, extra || {}))
+    });
+  };
+
+  window.sendMsg = async function () {
+    var inp = byId('chatInput');
+    var txt = inp && inp.value && inp.value.trim();
+    if (!txt) return false;
+    var conv = activeConversation();
+    if (!conv || !conv.id) return toast('Selecione uma conversa.', 'warn'), false;
+    var number = phoneFromConversation(conv);
+    if (!number) return toast('Conversa sem telefone WhatsApp.', 'warn'), false;
+    if (inp) inp.value = '';
+    try {
+      var data = await window.enviarWAMsg(number, txt, { conversa_id: conv.id, lead_id: conv.lead_id || null, cliente_id: conv.cliente_id || null });
+      if (data && data.configured === false) {
+        if (inp) inp.value = txt;
+        toast(data.message || 'WhatsApp nao configurado no backend.', 'warn');
+        return false;
+      }
+      if (typeof window.appendChatMsg === 'function') window.appendChatMsg(txt, true, new Date().toISOString());
+      conv.ultima_mensagem = txt.slice(0, 160);
+      conv.ultima_mensagem_em = new Date().toISOString();
+      if (typeof window.renderConvList === 'function') window.renderConvList();
+      return true;
+    } catch (error) {
+      if (inp) inp.value = txt;
+      toast('Erro ao enviar WhatsApp: ' + error.message, 'error');
+      return false;
+    }
+  };
+  window.sendMessage = window.sendMsg;
+
+  window.anexarArquivo = function () {
+    var inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.csv';
+    inp.onchange = async function () {
+      var file = inp.files && inp.files[0];
+      if (!file) return;
+      var conv = activeConversation();
+      if (!conv || !conv.id) return toast('Selecione uma conversa.', 'warn');
+      try {
+        toast('Enviando arquivo para o backend...', 'info');
+        var dataUrl = await fileToDataUrl(file);
+        var upload = await apiFetch('/api/files/upload', {
+          method: 'POST',
+          body: JSON.stringify({ name: file.name, mime_type: file.type || 'application/octet-stream', content_base64: dataUrl, lead_id: conv.lead_id || null, cliente_id: conv.cliente_id || null })
+        });
+        var fileRow = upload && upload.data || {};
+        var downloadUrl = fileRow.id ? '/api/files/' + encodeURIComponent(fileRow.id) + '/download' : '';
+        await apiFetch('/api/mensagens', {
+          method: 'POST',
+          body: JSON.stringify({ conversa_id: conv.id, lead_id: conv.lead_id || null, cliente_id: conv.cliente_id || null, direcao: 'outbound', canal: 'whatsapp', tipo: 'file', texto: 'Arquivo: ' + file.name, anexo_url: downloadUrl, status: 'saved' })
+        }).catch(function () { return null; });
+        await apiFetch('/api/conversas/' + encodeURIComponent(conv.id), { method: 'PATCH', body: JSON.stringify({ ultima_mensagem: 'Arquivo: ' + file.name, ultima_mensagem_em: new Date().toISOString() }) }).catch(function () { return null; });
+        if (typeof window.appendChatMsg === 'function') window.appendChatMsg('Arquivo salvo: ' + file.name, true, new Date().toISOString());
+        toast('Arquivo salvo no CRM. Envio de midia pelo WhatsApp deve ser feito por rota segura no backend.', 'success');
+      } catch (error) {
+        toast('Erro ao anexar arquivo: ' + error.message, 'error');
+      }
+    };
+    inp.click();
+  };
+
+  window.testarConexaoMeta = async function () {
+    var token = inputValue(['metaToken', 'waMetaToken']);
+    var res = byId('metaConTestResult') || byId('metaTestResult');
+    if (res) { res.style.display = 'block'; res.style.color = 'var(--gray2)'; res.textContent = 'Testando pelo backend...'; }
+    try {
+      var data = token ? await apiFetch('/api/meta/test', { method: 'POST', body: JSON.stringify({ token: token }) }) : await apiFetch('/api/meta/status', { method: 'GET' });
+      var ok = data.configured !== false && data.ok !== false;
+      if (res) { res.style.color = ok ? '#86efac' : '#fca5a5'; res.textContent = ok ? 'Meta conectada pelo backend.' : (data.message || data.error || 'Meta nao configurada.'); }
+      toast(ok ? 'Meta conectada pelo backend.' : (data.message || 'Meta nao configurada.'), ok ? 'success' : 'warn');
+      return data;
+    } catch (error) {
+      if (res) { res.style.color = '#fca5a5'; res.textContent = error.message; }
+      toast('Erro Meta: ' + error.message, 'error');
+      return null;
+    }
+  };
+  window.testarMetaWA = window.testarConexaoMeta;
+
+  window.abrirModalMetaAds = function () {
+    var cfg = window.META_CFG || {};
+    if (typeof window.openModal !== 'function') return toast('Modal indisponivel. Abra Ajustes > WhatsApp/Meta.', 'warn');
+    window.openModal('Conectar Meta Business',
+      '<div style="margin-bottom:12px;padding:10px;background:rgba(24,107,255,.08);border:1px solid rgba(24,107,255,.2);border-radius:8px;font-size:.8rem;color:#93c5fd;line-height:1.7"><strong>Credenciais seguras:</strong><br>O token sera enviado somente para o backend e nao ficara salvo no navegador.</div>'
+      + '<div class="form-group"><label>Access Token</label><input type="password" id="metaToken" placeholder="Cole o token apenas para salvar ou testar" class="form-input" autocomplete="off"></div>'
+      + '<div class="form-row"><div class="form-group"><label>Ad Account ID</label><input type="text" id="metaActId" placeholder="act_123456789" class="form-input" value="' + escapeHtml(cfg.actId || cfg.adAccountId || '') + '"></div>'
+      + '<div class="form-group"><label>Business ID</label><input type="text" id="metaBizId" placeholder="987654321" class="form-input" value="' + escapeHtml(cfg.bizId || cfg.businessId || '') + '"></div></div>'
+      + '<div id="metaConTestResult" style="display:none;margin:10px 0;padding:9px 12px;border-radius:7px;font-size:.79rem"></div>'
+      + '<button onclick="testarConexaoMeta()" style="padding:7px 14px;background:transparent;border:1px solid var(--border2);border-radius:7px;color:var(--gray2);cursor:pointer;font-family:inherit;font-size:.79rem;margin-top:4px">Testar conexao</button>',
+      async function () {
+        var token = inputValue('metaToken');
+        var actId = inputValue('metaActId');
+        var bizId = inputValue('metaBizId');
+        if (!token && !actId && !bizId) return toast('Informe token, Ad Account ID ou Business ID.', 'warn');
+        try {
+          await saveIntegration('meta', { token: token, accessToken: token, adAccountId: actId, businessId: bizId, active: true });
+          window.META_CFG = { actId: actId, bizId: bizId, ativa: true, token: '' };
+          try { localStorage.setItem('r2r_meta_ads', JSON.stringify(window.META_CFG)); } catch (e) {}
+          toast('Meta Ads salva com seguranca no backend.', 'success');
+          if (typeof window.closeModal === 'function') window.closeModal();
+          if (typeof window.carregarMetaAdsCampanhas === 'function') window.carregarMetaAdsCampanhas();
+        } catch (error) {
+          toast('Erro ao salvar Meta Ads: ' + error.message, 'error');
+        }
+      });
   };
 
   window.gerarRelatorio = async function () {

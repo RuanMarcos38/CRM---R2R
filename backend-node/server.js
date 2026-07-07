@@ -614,7 +614,13 @@ function allowedUploadTypes() {
     'image/png',
     'image/jpeg',
     'image/webp',
+    'video/mp4',
+    'audio/mpeg',
+    'audio/ogg',
+    'audio/webm',
     'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'text/plain',
     'text/csv'
   ]);
@@ -1217,14 +1223,67 @@ async function handleIntegrations(req, res, url, ctx) {
       number,
       textMessage: { text }
     }, cfg);
+    let messageRow = null;
+    let conversationUpdated = false;
+    const conversaId = String(body.conversa_id || body.conversation_id || '').trim();
+    if (conversaId) {
+      const sentAt = new Date().toISOString();
+      const deliveryStatus = result.configured === false ? 'not_configured' : (result.ok && result.success !== false ? 'sent' : 'failed');
+      messageRow = await store.insert('mensagens', {
+        conversa_id: conversaId,
+        lead_id: body.lead_id || null,
+        cliente_id: body.cliente_id || body.client_id || null,
+        usuario_id: ctx.profile && ctx.profile.id || null,
+        direcao: 'outbound',
+        canal: 'whatsapp',
+        tipo: 'text',
+        texto: text,
+        status: deliveryStatus,
+        metadata: {
+          number,
+          backend_route: url.pathname,
+          integration_status: result.status || null,
+          configured: result.configured !== false
+        }
+      }, ctx, RESOURCES.mensagens).catch(error => {
+        console.warn('[whatsapp_send] mensagem nao persistida:', error.message);
+        return null;
+      });
+      await store.update('conversas', conversaId, {
+        ultima_mensagem: text.slice(0, 160),
+        ultima_mensagem_em: sentAt
+      }, ctx, RESOURCES.conversas).then(() => {
+        conversationUpdated = true;
+      }).catch(error => {
+        console.warn('[whatsapp_send] conversa nao atualizada:', error.message);
+      });
+    }
     await audit(ctx, 'whatsapp_send', 'mensagens', null, { number, status: result.status });
-    return sendJson(req, res, 200, result);
+    return sendJson(req, res, 200, {
+      ...result,
+      crm: {
+        message_saved: !!messageRow,
+        conversation_updated: conversationUpdated,
+        mensagem_id: messageRow && messageRow.id || null,
+        conversa_id: conversaId || null
+      }
+    });
   }
 
   if (url.pathname === '/api/meta/status' && req.method === 'GET') {
     await assertFeatureEnabled(store, ctx, 'meta_ads');
     const meta = await getIntegrationConfig(ctx, 'meta');
     const result = await metaRequest('/me?fields=id,name', meta.config);
+    return sendJson(req, res, 200, result);
+  }
+
+  if (url.pathname === '/api/meta/test' && req.method === 'POST') {
+    await assertFeatureEnabled(store, ctx, 'meta_ads');
+    if (!isCompanyAdmin(ctx)) return sendJson(req, res, 403, { ok: false, error: 'Somente Administrador da Empresa pode testar Meta Ads.' });
+    const body = await readBody(req);
+    const token = firstText(body.token, body.accessToken, body.access_token, body.apiKey, body.api_key);
+    if (!token) return sendJson(req, res, 400, { ok: false, error: 'Informe o token da Meta para testar.' });
+    const result = await metaRequest('/me?fields=id,name', { ...body, token, accessToken: token, __disableEnv: true });
     return sendJson(req, res, 200, result);
   }
 
