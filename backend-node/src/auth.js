@@ -68,6 +68,39 @@ function normalizeRole(value) {
   })[tipo] || tipo;
 }
 
+function autoLinkAuthProfileAllowed() {
+  return boolEnv('AUTO_LINK_AUTH_PROFILE', true) || boolEnv('ALLOW_EMAIL_PROFILE_LINK', false);
+}
+
+async function findAndLinkProfileByEmail(authUser, store) {
+  const email = authUser && authUser.email ? String(authUser.email).trim().toLowerCase() : '';
+  const authUserId = authUser && authUser.id ? String(authUser.id).trim() : '';
+  if (!email || !authUserId || !autoLinkAuthProfileAllowed()) return null;
+  if (!store || store.kind !== 'supabase' || typeof store.request !== 'function') return null;
+
+  const params = new URLSearchParams();
+  params.set('select', '*');
+  params.set('email', `eq.${email}`);
+  params.set('limit', '2');
+
+  const rows = await store.request(`/usuarios?${params.toString()}`).catch(() => []);
+  if (!Array.isArray(rows) || rows.length !== 1) return null;
+
+  const profile = rows[0];
+  if (profile.auth_user_id && profile.auth_user_id !== authUserId) return null;
+  if (profile.auth_user_id === authUserId) return profile;
+
+  const updateParams = new URLSearchParams();
+  updateParams.set('id', `eq.${profile.id}`);
+  const updated = await store.request(`/usuarios?${updateParams.toString()}`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({ auth_user_id: authUserId })
+  }).catch(() => null);
+
+  return Array.isArray(updated) && updated.length === 1 ? updated[0] : profile;
+}
+
 async function resolveAuthContext(req, store) {
   const token = bearerToken(req);
   let authUser = null;
@@ -86,7 +119,8 @@ async function resolveAuthContext(req, store) {
 
   if (!authUser) throw authError('Sessao invalida ou expirada.', 401);
 
-  const profile = await store.findProfileByAuthUser(authUser);
+  let profile = await store.findProfileByAuthUser(authUser);
+  if (!profile) profile = await findAndLinkProfileByEmail(authUser, store);
   if (!profile) {
     throw authError('Usuario autenticado, mas sem perfil em public.usuarios. Crie o usuario e vincule auth_user_id ou email.', 403);
   }
@@ -122,4 +156,4 @@ async function verifyApiKey(req, store) {
   };
 }
 
-module.exports = { resolveAuthContext, requireAuth, verifyApiKey, permissionsFromProfile, bearerToken };
+module.exports = { resolveAuthContext, requireAuth, verifyApiKey, permissionsFromProfile, bearerToken, findAndLinkProfileByEmail };
