@@ -1,17 +1,21 @@
 name: Production SSL and API smoke test
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
-  schedule:
-    - cron: '17 */6 * * *'
 
 permissions:
   contents: read
 
+concurrency:
+  group: production-smoke-main
+  cancel-in-progress: true
+
 jobs:
   production-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,5 +25,14 @@ jobs:
         with:
           node-version: 20
 
-      - name: Check certificate and API health
-        run: node scripts/check-production.mjs
+      - name: Wait for EasyPanel auto deploy and check production
+        run: |
+          for attempt in {1..12}; do
+            echo "Production check attempt ${attempt}/12"
+            if node scripts/check-production.mjs; then
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "Production did not become healthy after 6 minutes."
+          exit 1
