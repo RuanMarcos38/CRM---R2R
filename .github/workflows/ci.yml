@@ -1,0 +1,55 @@
+name: Validate R2R CRM
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install production dependencies
+        run: npm ci --omit=dev
+
+      - name: Validate JavaScript
+        run: npm run check
+
+      - name: Run backend tests
+        run: npm test
+
+      - name: Build Docker image
+        run: docker build -t r2r-crm-saas:${{ github.sha }} .
+
+      - name: Test container health
+        run: |
+          docker run -d --rm --name r2r-crm-test -p 3000:3000 \
+            -e NODE_ENV=production \
+            -e PORT=3000 \
+            -e HOST=0.0.0.0 \
+            -e ALLOW_DEMO_AUTH=true \
+            r2r-crm-saas:${{ github.sha }}
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:3000/api/health > health.json; then
+              cat health.json
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs r2r-crm-test || true
+          exit 1
