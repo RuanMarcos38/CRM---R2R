@@ -1,0 +1,48 @@
+{
+  "$schema": "https://easypanel.io/schemas/service.json",
+  "name": "api-crm",
+  "source": {
+    "type": "github",
+    "repository": "RuanMarcos38/CRM---R2R",
+    "branch": "main",
+    "buildPath": "/",
+    "dockerfile": "Dockerfile"
+  },
+  "deployment": {
+    "port": 3000,
+    "healthCheckPath": "/api/health",
+    "autoDeploy": true
+  },
+  "domains": [
+    {
+      "host": "api.r2rmarketingdigital.com.br",
+      "path": "/",
+      "port": 3000,
+      "protocol": "http",
+      "https": true
+    }
+  ],
+  "environment": {
+    "NODE_ENV": "production",
+    "PORT": "3000",
+    "HOST": "0.0.0.0",
+    "PUBLIC_DIR": "/app/frontend-public_html",
+    "APP_URL": "https://api.r2rmarketingdigital.com.br",
+    "PUBLIC_URL": "https://api.r2rmarketingdigital.com.br",
+    "FRONTEND_URL": "https://crm.r2rmarketingdigital.com.br",
+    "CORS_ORIGIN": "https://crm.r2rmarketingdigital.com.br",
+    "ALLOW_DEMO_AUTH": "false",
+    "ALLOW_EMAIL_PROFILE_LINK": "false",
+    "ALLOW_GLOBAL_INTEGRATION_FALLBACK": "false",
+    "OPENAI_MODEL": "gpt-4o-mini",
+    "OPENAI_TEMPERATURE": "0.6",
+    "EVOLUTION_INSTANCE_NAME": "Ruan",
+    "EVOLUTION_INSTANCE": "Ruan",
+    "EVOLUTION_FORCE_ENV_CREDENTIALS": "true",
+    "META_REDIRECT_URI": "https://api.r2rmarketingdigital.com.br/api/meta/oauth/callback",
+    "META_GRAPH_VERSION": "v20.0",
+    "GOOGLE_REDIRECT_URI": "https://api.r2rmarketingdigital.com.br/api/google/oauth/callback",
+    "PAYMENT_PROVIDER": "checkout_link",
+    "PAYMENT_ALLOW_WHATSAPP_FALLBACK": "true"
+  }
+}
