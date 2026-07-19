@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "cd backend-node && npm test",
-    "check": "node --check server.js && node --check backend-node/server.js"
+    "check": "node --check server.js && node --check backend-node/server.js && node --check scripts/check-production.mjs",
+    "check:production": "node scripts/check-production.mjs"
   },
   "engines": {
     "node": ">=18"
