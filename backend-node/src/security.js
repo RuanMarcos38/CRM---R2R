@@ -5,15 +5,16 @@ const buckets = new Map();
 
 function corsHeaders(reqOrigin) {
   const configured = [...listEnv('CORS_ORIGIN', []), ...listEnv('FRONTEND_URL', [])];
-  const raw = configured.length ? [...new Set(configured)] : ['*'];
-  const allowAll = raw.includes('*');
-  const origin = allowAll ? '*' : (reqOrigin && raw.includes(reqOrigin) ? reqOrigin : raw[0]);
+  const production = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+  const raw = configured.length ? [...new Set(configured)] : (production ? [] : ['*']);
+  const allowAll = raw.includes('*') && !production;
+  const origin = allowAll ? '*' : (reqOrigin && raw.includes(reqOrigin) ? reqOrigin : (!reqOrigin ? raw[0] : ''));
   const headers = {
-    'Access-Control-Allow-Origin': origin || '*',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization,apikey,x-api-key',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization,apikey,x-api-key,x-evolution-secret,x-billing-secret,x-webhook-secret,x-payment-secret',
     'Access-Control-Max-Age': '86400'
   };
+  if (origin) headers['Access-Control-Allow-Origin'] = origin;
   if (origin && origin !== '*') headers.Vary = 'Origin';
   return headers;
 }
