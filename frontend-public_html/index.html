@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>R2R CRM IA — Marketing Digital</title>
-<script src="config.js?v=20260705-real-qr"></script>
+<script src="config.js?v=20260726-backend-origin"></script>
 <script>
 // R2R CRM — CONFIGURAÇÃO DA APLICAÇÃO REAL
 // Depois de subir o backend Node/API, coloque aqui a URL pública da API.
@@ -15,10 +15,14 @@
 (function(){
   var stored=''; try{stored=localStorage.getItem('r2r_api_base')||'';}catch(e){}
   var configured=(window.R2R_API_BASE||(window.R2R_CONFIG&&window.R2R_CONFIG.API_BASE_URL)||'').replace(/\/$/,'');
+  function broken(url){ try{return new URL(url).hostname==='api.r2rmarketingdigital.com.br';}catch(e){return false;} }
+  if(broken(configured)) configured='';
+  if(broken(stored)){ stored=''; try{localStorage.removeItem('r2r_api_base');}catch(e){} }
   var auto='';
   try{
     var h=window.location.hostname, p=window.location.port, proto=window.location.protocol;
     if(h==='localhost'||h==='127.0.0.1') auto=proto+'//'+h+':3000';
+    else auto=window.location.origin;
   }catch(e){}
   window.R2R_API_BASE=configured||stored||auto||'';
 })();
@@ -7321,6 +7325,6 @@ console.log('[R2R CRM] Patch v12 ✅');
 })();
 </script>
 
-<script src="assets/crm-saas-bridge.js?v=20260705-real-qr"></script>
+<script src="assets/crm-saas-bridge.js?v=20260726-backend-origin"></script>
 </body>
 </html>

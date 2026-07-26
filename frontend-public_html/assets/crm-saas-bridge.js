@@ -114,16 +114,32 @@
     try { return cleanUrl(window.location.origin); } catch (e) { return ''; }
   }
 
+  function isKnownBrokenApiBase(base) {
+    try {
+      var host = new URL(cleanUrl(base)).hostname;
+      return host === 'api.r2rmarketingdigital.com.br';
+    } catch (e) {
+      return false;
+    }
+  }
+
   function rememberApiBase(base) {
     base = cleanUrl(base);
-    if (!base) return;
+    if (!base || isKnownBrokenApiBase(base)) return;
     discoveredApiBase = base;
     window.R2R_API_BASE = base;
     try { localStorage.setItem('r2r_api_base', base); } catch (e) {}
   }
 
   function apiBase() {
-    return cleanUrl(discoveredApiBase || window.R2R_API_BASE || localStorage.getItem('r2r_api_base') || currentOrigin());
+    var candidates = [discoveredApiBase, window.R2R_API_BASE];
+    try { candidates.push(localStorage.getItem('r2r_api_base')); } catch (e) {}
+    candidates.push(currentOrigin());
+    for (var i = 0; i < candidates.length; i += 1) {
+      var candidate = cleanUrl(candidates[i]);
+      if (candidate && !isKnownBrokenApiBase(candidate)) return candidate;
+    }
+    return currentOrigin();
   }
 
   function apiBaseCandidates() {
@@ -132,17 +148,19 @@
       value = cleanUrl(value);
       if (value && list.indexOf(value) === -1) list.push(value);
     }
-    try { add(localStorage.getItem('r2r_api_base')); } catch (e) {}
-    add(window.R2R_API_BASE);
     add(currentOrigin());
+    try {
+      var stored = localStorage.getItem('r2r_api_base');
+      if (isKnownBrokenApiBase(stored)) localStorage.removeItem('r2r_api_base');
+      else add(stored);
+    } catch (e) {}
+    if (!isKnownBrokenApiBase(window.R2R_API_BASE)) add(window.R2R_API_BASE);
     try {
       var host = window.location.hostname;
       if (host === 'localhost' || host === '127.0.0.1') {
         add(window.location.protocol + '//' + host + ':3000');
         add(window.location.protocol + '//' + host + ':3001');
       }
-      if (host === 'crm.r2rmarketingdigital.com.br') add('https://api.r2rmarketingdigital.com.br');
-      if (host.indexOf('crm.') === 0) add(window.location.protocol + '//api.' + host.slice(4));
     } catch (e) {}
     return list;
   }
@@ -174,7 +192,7 @@
     if (String(path || '').indexOf('/api/') !== 0) return res;
     var contentType = responseHeader(res, 'content-type').toLowerCase();
     if (res && res.ok && contentType.indexOf('text/html') >= 0) {
-      throw new Error('A URL da API esta apontando para o frontend. Configure o backend em https://api.r2rmarketingdigital.com.br.');
+      throw new Error('A URL atual ainda esta servindo o frontend no lugar do backend. Publique o app Node no EasyPanel e aponte este dominio para o servico correto.');
     }
     return res;
   }

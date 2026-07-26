@@ -1,7 +1,9 @@
 (function () {
   'use strict';
 
-  window.R2R_EVOLUTION_RUNTIME_FIX = '20260725-evolution-runtime-fix';
+  var VERSION = '20260726-backend-origin';
+  if (window.R2R_EVOLUTION_RUNTIME_FIX === VERSION) return;
+  window.R2R_EVOLUTION_RUNTIME_FIX = VERSION;
 
   var nativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
 
@@ -17,13 +19,25 @@
   function apiBase() {
     var stored = '';
     try { stored = localStorage.getItem('r2r_api_base') || ''; } catch (e) {}
-    return cleanUrl(window.R2R_API_BASE || stored || window.location.origin);
+    var candidates = [window.R2R_API_BASE, stored, window.location.origin];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var candidate = cleanUrl(candidates[i]);
+      if (!candidate) continue;
+      try {
+        if (new URL(candidate).hostname === 'api.r2rmarketingdigital.com.br') {
+          try { localStorage.removeItem('r2r_api_base'); } catch (e) {}
+          continue;
+        }
+      } catch (e) {}
+      return candidate;
+    }
+    return cleanUrl(window.location.origin);
   }
 
   function isBackendOrigin(origin) {
     origin = cleanUrl(origin);
     var base = apiBase();
-    return !origin || origin === cleanUrl(window.location.origin) || origin === base || /\/\/api\.r2rmarketingdigital\.com\.br$/i.test(origin);
+    return !origin || origin === cleanUrl(window.location.origin) || origin === base;
   }
 
   function requestOrigin(input) {

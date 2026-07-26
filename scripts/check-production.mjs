@@ -3,7 +3,7 @@
 import tls from 'node:tls';
 import https from 'node:https';
 
-const hostname = process.env.R2R_API_HOST || 'api.r2rmarketingdigital.com.br';
+const hostname = process.env.R2R_API_HOST || 'crm.r2rmarketingdigital.com.br';
 const healthPath = process.env.R2R_HEALTH_PATH || '/api/health';
 const timeoutMs = Number(process.env.R2R_CHECK_TIMEOUT_MS || 10000);
 
@@ -38,7 +38,7 @@ function checkHealth() {
         const contentType = String(res.headers['content-type'] || '');
         let json = null;
         try { json = JSON.parse(body); } catch {}
-        resolve({ statusCode: res.statusCode, contentType, json, sample: body.slice(0, 300) });
+        resolve({ statusCode: res.statusCode, contentType, json, sample: body.slice(0, 300), looksLikeFrontend: /<!DOCTYPE html|<html/i.test(body) });
       });
     });
     req.once('timeout', () => req.destroy(new Error('HTTPS timeout')));
@@ -49,8 +49,14 @@ function checkHealth() {
 try {
   const certificate = await checkCertificate();
   const health = await checkHealth();
-  console.log(JSON.stringify({ ok: health.statusCode === 200 && health.json?.ok === true, hostname, certificate, health }, null, 2));
-  if (health.statusCode !== 200 || health.json?.ok !== true) process.exitCode = 1;
+  const ok = health.statusCode === 200 && health.json?.ok === true;
+  console.log(JSON.stringify({ ok, hostname, certificate, health }, null, 2));
+  if (!ok) {
+    if (health.looksLikeFrontend) {
+      console.error('Production route returned frontend HTML instead of backend JSON. Check EasyPanel domain, service port and Hostinger/CDN cache.');
+    }
+    process.exitCode = 1;
+  }
 } catch (error) {
   console.error(JSON.stringify({ ok: false, hostname, error: error.message, code: error.code || null }, null, 2));
   process.exitCode = 1;
