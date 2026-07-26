@@ -34,6 +34,7 @@ const {
 
 const VERSION = '2026.07.05-evolution-single-instance-fallback';
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = resolvePublicDir();
 const store = createStore();
 
@@ -1552,8 +1553,8 @@ function createServer() {
 }
 
 if (require.main === module) {
-  createServer().listen(PORT, () => {
-    console.log(`R2R CRM SaaS API rodando em http://localhost:${PORT}`);
+  createServer().listen(PORT, HOST, () => {
+    console.log(`R2R CRM SaaS API rodando em http://${HOST}:${PORT}`);
     console.log(`[boot] versao      = ${VERSION}`);
     console.log(`[boot] storage     = ${store.kind}`);
     console.log(`[boot] public_dir  = ${PUBLIC_DIR}`);

@@ -7,16 +7,17 @@ Verifique no EasyPanel:
 - App esta ligado.
 - Porta interna esta `3000`.
 - Start command esta `node server.js`.
-- Health check esta `/health`.
-- Dominio `api.r2rmarketingdigital.com.br` aponta para esse app.
+- Health check esta `/api/health`.
+- Dominio `crm.r2rmarketingdigital.com.br` aponta para esse app Node.
+- O subdominio `api.r2rmarketingdigital.com.br` nao deve ser usado se estiver apontando para outro servico.
 - Variaveis `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` e `SUPABASE_SERVICE_ROLE_KEY` foram preenchidas.
 
 ## Se o frontend chamar o dominio errado
 
-Atualize a Hostinger com os arquivos de:
+Publique a raiz deste repositorio como app Node/Docker no EasyPanel. Nao publique uma copia antiga separada em Hostinger/public_html.
 
 ```text
-PACOTE_DEPLOY_R2R/frontend-public_html
+RuanMarcos38/CRM---R2R
 ```
 
 Depois limpe no navegador:
@@ -29,10 +30,10 @@ location.reload()
 ## Resultado esperado
 
 ```text
-https://api.r2rmarketingdigital.com.br/health
+https://crm.r2rmarketingdigital.com.br/api/health
 ```
 
-deve retornar JSON, nunca HTML e nunca 502.
+deve retornar JSON, nunca HTML e nunca 502. Se retornar HTML, o dominio esta servindo frontend estatico antigo em vez do backend Node.
 
 ## Evolution / QR Code
 

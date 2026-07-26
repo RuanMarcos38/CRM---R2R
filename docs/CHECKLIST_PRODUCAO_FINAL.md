@@ -16,14 +16,15 @@
 
 ## Backend
 
-- [ ] Node.js 18+ disponivel.
+- [ ] Node.js 20 disponivel.
 - [ ] `npm install` executado.
 - [ ] `.env` criado a partir de `.env.example`.
 - [ ] `NODE_ENV=production`.
 - [ ] `PORT=3000` ou porta definida pelo provedor.
-- [ ] Dominio de API aponta para o backend Node: `https://api.r2rmarketingdigital.com.br`.
-- [ ] `https://api.r2rmarketingdigital.com.br/health` retorna JSON, nao HTML nem 502.
-- [ ] O dominio do frontend `https://crm.r2rmarketingdigital.com.br` nao deve responder `/api/*` com `index.html`.
+- [ ] Dominio principal aponta para o backend Node: `https://crm.r2rmarketingdigital.com.br`.
+- [ ] `https://crm.r2rmarketingdigital.com.br/api/health` retorna JSON, nao HTML nem 502.
+- [ ] Nenhuma rota `/api/*` responde com `index.html`.
+- [ ] O subdominio `https://api.r2rmarketingdigital.com.br` so e usado se tambem apontar para este mesmo backend Node.
 - [ ] `SUPABASE_URL` configurado.
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` configurado no backend.
 - [ ] `CORS_ORIGIN` aponta para o dominio real do frontend.
@@ -43,9 +44,9 @@
 
 ## Frontend
 
-- [ ] Arquivos de `frontend-public_html` enviados para `public_html`.
-- [ ] `config.js` aponta para `https://api.r2rmarketingdigital.com.br`.
-- [ ] Limpar `localStorage.r2r_api_base` no navegador se ele ficou salvo como `https://crm.r2rmarketingdigital.com.br`.
+- [ ] O frontend e servido pelo backend Node a partir de `frontend-public_html`.
+- [ ] `config.js` nao fixa subdominio de API quebrado.
+- [ ] Limpar `localStorage.r2r_api_base` no navegador se ele ficou salvo como `https://api.r2rmarketingdigital.com.br`.
 - [ ] `index.html` carrega sem tela quebrada.
 - [ ] `checkBackendHealth()` retorna backend online.
 - [ ] Login abre o painel do CRM.
@@ -75,14 +76,12 @@
 
 ## Deploy e dominio
 
-- [ ] Backend publicado em EasyPanel/VPS/Render/Railway ou ambiente Node equivalente.
-- [ ] Frontend publicado na Hostinger ou hospedagem estatica.
-- [ ] SSL ativo no frontend.
-- [ ] SSL ativo no backend.
-- [ ] Dominio/subdominio do backend configurado.
-- [ ] Dominio/subdominio do frontend configurado.
-- [ ] CORS validado entre frontend e backend.
-- [ ] Health check do provedor aponta para `/health`.
+- [ ] App unico publicado em EasyPanel/VPS/Render/Railway ou ambiente Node equivalente.
+- [ ] Nao existe copia antiga em Hostinger/public_html sobrescrevendo o CRM.
+- [ ] SSL ativo no dominio principal.
+- [ ] Dominio principal configurado no servico Node.
+- [ ] CORS validado para o dominio principal.
+- [ ] Health check do provedor aponta para `/api/health`.
 
 ## Testes
 

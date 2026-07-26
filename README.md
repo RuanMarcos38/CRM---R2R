@@ -20,8 +20,8 @@ Publique este repositorio pela **raiz** como uma aplicacao App/Node/Docker. Nao 
 - Porta interna/proxy: `3000`
 - Host interno: `0.0.0.0`
 - Health check: `/api/health`
-- Dominio da API: `api.r2rmarketingdigital.com.br`
-- Dominio do CRM: `crm.r2rmarketingdigital.com.br`
+- Dominio principal do CRM/API: `crm.r2rmarketingdigital.com.br`
+- Subdominio opcional de API: somente use `api.r2rmarketingdigital.com.br` se ele apontar para este mesmo app Node
 - Protocolo entre proxy e container: `HTTP`
 - HTTPS publico: Let's Encrypt automatico do EasyPanel
 
@@ -34,8 +34,8 @@ NODE_ENV=production
 PORT=3000
 HOST=0.0.0.0
 PUBLIC_DIR=/app/frontend-public_html
-APP_URL=https://api.r2rmarketingdigital.com.br
-PUBLIC_URL=https://api.r2rmarketingdigital.com.br
+APP_URL=https://crm.r2rmarketingdigital.com.br
+PUBLIC_URL=https://crm.r2rmarketingdigital.com.br
 FRONTEND_URL=https://crm.r2rmarketingdigital.com.br
 CORS_ORIGIN=https://crm.r2rmarketingdigital.com.br
 ALLOW_DEMO_AUTH=false
@@ -50,8 +50,8 @@ As chaves reais de Supabase, OpenAI, Evolution, Meta, Google e n8n devem ficar e
 A API correta deve retornar JSON:
 
 ```text
-https://api.r2rmarketingdigital.com.br/api/health
-https://api.r2rmarketingdigital.com.br/api/config
+https://crm.r2rmarketingdigital.com.br/api/health
+https://crm.r2rmarketingdigital.com.br/api/config
 ```
 
 Para testar certificado SSL e resposta da API pelo terminal:
@@ -64,6 +64,8 @@ O comando falha quando o certificado nao e confiavel, quando `/api/health` retor
 
 ## SSL e dominio
 
-O registro DNS deve ser `A api -> 2.25.155.142`. No EasyPanel, o dominio `api.r2rmarketingdigital.com.br` deve estar vinculado somente ao servico `api-crm`, com proxy para a porta `3000`, protocolo interno HTTP e Let's Encrypt ativado. Nao use certificado SSL do n8n, certificado autoassinado ou certificado de origem do Cloudflare diretamente no navegador.
+O DNS do dominio `crm.r2rmarketingdigital.com.br` deve apontar para o servico Node do EasyPanel, com proxy para a porta `3000`, protocolo interno HTTP e Let's Encrypt ativado. A rota `https://crm.r2rmarketingdigital.com.br/api/health` precisa retornar JSON. Se retornar HTML, o dominio ainda esta servindo uma hospedagem estatica antiga em vez do backend.
+
+Nao use `api.r2rmarketingdigital.com.br` como URL do backend enquanto ele nao apontar para o mesmo servico Node. Se o subdominio separado for reativado, ele tambem deve responder `/api/health` com JSON antes de ser salvo no CRM.
 
 O backend da raiz serve o frontend correto de `frontend-public_html/`, injeta as configuracoes publicas no navegador e mantem as rotas `/health`, `/api/health`, `/api/auth/*`, `/api/leads`, `/api/clientes`, `/api/tarefas`, `/api/mensagens`, `/api/reports/dashboard`, `/api/meta/*` e `/api/integrations/evolution/*`.

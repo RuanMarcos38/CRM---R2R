@@ -1,36 +1,24 @@
 #!/usr/bin/env node
 
-import tls from 'node:tls';
 import https from 'node:https';
 
 const hostname = process.env.R2R_API_HOST || 'crm.r2rmarketingdigital.com.br';
 const healthPath = process.env.R2R_HEALTH_PATH || '/api/health';
 const timeoutMs = Number(process.env.R2R_CHECK_TIMEOUT_MS || 10000);
-
-function checkCertificate() {
-  return new Promise((resolve, reject) => {
-    const socket = tls.connect({ hostname, port: 443, servername: hostname, rejectUnauthorized: true });
-    socket.setTimeout(timeoutMs);
-    socket.once('secureConnect', () => {
-      const cert = socket.getPeerCertificate();
-      resolve({
-        authorized: socket.authorized,
-        subject: cert.subject,
-        issuer: cert.issuer,
-        validFrom: cert.valid_from,
-        validTo: cert.valid_to,
-        fingerprint256: cert.fingerprint256
-      });
-      socket.end();
-    });
-    socket.once('timeout', () => socket.destroy(new Error('TLS timeout')));
-    socket.once('error', reject);
-  });
-}
+const family = Number(process.env.R2R_CHECK_IP_FAMILY || 4) || undefined;
 
 function checkHealth() {
   return new Promise((resolve, reject) => {
-    const req = https.get({ hostname, port: 443, path: healthPath, timeout: timeoutMs, headers: { Accept: 'application/json' } }, res => {
+    const req = https.get({
+      hostname,
+      port: 443,
+      path: healthPath,
+      family,
+      servername: hostname,
+      rejectUnauthorized: true,
+      timeout: timeoutMs,
+      headers: { Accept: 'application/json' }
+    }, res => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', chunk => { body += chunk; });
@@ -38,7 +26,26 @@ function checkHealth() {
         const contentType = String(res.headers['content-type'] || '');
         let json = null;
         try { json = JSON.parse(body); } catch {}
-        resolve({ statusCode: res.statusCode, contentType, json, sample: body.slice(0, 300), looksLikeFrontend: /<!DOCTYPE html|<html/i.test(body) });
+        const socket = res.socket || {};
+        const cert = typeof socket.getPeerCertificate === 'function' ? socket.getPeerCertificate() : {};
+        resolve({
+          certificate: {
+            authorized: socket.authorized !== false,
+            authorizationError: socket.authorizationError || null,
+            subject: cert && cert.subject,
+            issuer: cert && cert.issuer,
+            validFrom: cert && cert.valid_from,
+            validTo: cert && cert.valid_to,
+            fingerprint256: cert && cert.fingerprint256
+          },
+          health: {
+            statusCode: res.statusCode,
+            contentType,
+            json,
+            sample: body.slice(0, 300),
+            looksLikeFrontend: /<!DOCTYPE html|<html/i.test(body)
+          }
+        });
       });
     });
     req.once('timeout', () => req.destroy(new Error('HTTPS timeout')));
@@ -47,10 +54,9 @@ function checkHealth() {
 }
 
 try {
-  const certificate = await checkCertificate();
-  const health = await checkHealth();
+  const { certificate, health } = await checkHealth();
   const ok = health.statusCode === 200 && health.json?.ok === true;
-  console.log(JSON.stringify({ ok, hostname, certificate, health }, null, 2));
+  console.log(JSON.stringify({ ok, hostname, family, certificate, health }, null, 2));
   if (!ok) {
     if (health.looksLikeFrontend) {
       console.error('Production route returned frontend HTML instead of backend JSON. Check EasyPanel domain, service port and Hostinger/CDN cache.');

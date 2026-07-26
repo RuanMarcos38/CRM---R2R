@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.R2R_BRIDGE_VERSION = '20260707-safe-backend-actions';
+  window.R2R_BRIDGE_VERSION = '20260726-backend-origin-audit';
   console.log('[R2R] Backend bridge version', window.R2R_BRIDGE_VERSION);
 
   var TABLE_ENDPOINTS = {
@@ -115,6 +115,7 @@
   }
 
   function isKnownBrokenApiBase(base) {
+    if (window.R2R_ALLOW_API_SUBDOMAIN === true) return false;
     try {
       var host = new URL(cleanUrl(base)).hostname;
       return host === 'api.r2rmarketingdigital.com.br';
@@ -474,14 +475,30 @@
   window.testarBackendCompleto = window.testarBackendR2R;
 
   window.salvarBackendUrl = function () {
+    return salvarBackendUrlValidada();
+  };
+
+  async function salvarBackendUrlValidada() {
     var input = byId('backendUrl') || byId('backendUrlInput') || byId('apiBaseInput') || byId('r2rBackendUrl');
     var url = input && input.value ? cleanUrl(input.value) : apiBase();
     if (!url) return toast('Informe a URL do backend.', 'warn');
-    window.R2R_API_BASE = url;
-    localStorage.setItem('r2r_api_base', url);
-    toast('URL do backend salva.', 'success');
+    if (isKnownBrokenApiBase(url)) {
+      try { localStorage.removeItem('r2r_api_base'); } catch (e) {}
+      return toast('Este subdominio de API esta fora do ar. Use o dominio do app Node publicado no EasyPanel.', 'error');
+    }
+    try {
+      var res = await httpFetch(url + '/api/health', { cache: 'no-store', timeout: 7000 });
+      var data = {};
+      try { data = await res.json(); } catch (e) {}
+      if (!res.ok || !data.ok) throw new Error('A URL nao respondeu /api/health com JSON valido.');
+      rememberApiBase(url);
+      window.R2R_BACKEND_READY = true;
+      toast('Backend validado e salvo: ' + url, 'success');
+    } catch (error) {
+      toast('Nao foi possivel validar o backend: ' + error.message, 'error');
+    }
     if (typeof window.renderTestsGrid === 'function') window.renderTestsGrid();
-  };
+  }
 
   function readWAConfigFromForm() {
     var urlEl = byId('waEvoUrl') || byId('waEvoUrl2');
@@ -1090,6 +1107,7 @@
     var box = byId('testsGrid') || byId('integrationsTestsGrid') || byId('testesGrid');
     if (!box) return;
     var base = apiBase();
+    var placeholder = currentOrigin() || 'https://crm.r2rmarketingdigital.com.br';
     var items = [
       { label: 'Backend/API', sub: base || 'Nao configurado', fn: 'testarBackendCompleto()' },
       { label: 'Supabase/Auth', sub: 'Valida sessao e perfil', fn: 'testarSupabaseR2R()' },
@@ -1100,7 +1118,7 @@
       { label: 'N8N', sub: 'Teste pelo backend', fn: 'testarN8N()' }
     ];
     box.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'
-      + '<input id="backendUrlInput" value="' + escapeHtml(base) + '" placeholder="https://api.r2rmarketingdigital.com.br" style="flex:1;min-width:260px;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text1);font-family:inherit;font-size:.83rem;outline:none">'
+      + '<input id="backendUrlInput" value="' + escapeHtml(base) + '" placeholder="' + escapeHtml(placeholder) + '" style="flex:1;min-width:260px;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text1);font-family:inherit;font-size:.83rem;outline:none">'
       + '<button onclick="salvarBackendUrl()" style="padding:9px 14px;background:var(--purple);border:none;border-radius:7px;color:#fff;font-size:.8rem;font-weight:700;cursor:pointer;font-family:inherit">Salvar URL</button>'
       + '<button onclick="testarBackendCompleto()" style="padding:9px 14px;background:transparent;border:1px solid var(--border);border-radius:7px;color:var(--gray2);font-size:.8rem;font-weight:700;cursor:pointer;font-family:inherit">Testar Backend</button>'
       + '</div>'

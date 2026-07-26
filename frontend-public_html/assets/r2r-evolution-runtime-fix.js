@@ -24,7 +24,7 @@
       var candidate = cleanUrl(candidates[i]);
       if (!candidate) continue;
       try {
-        if (new URL(candidate).hostname === 'api.r2rmarketingdigital.com.br') {
+        if (window.R2R_ALLOW_API_SUBDOMAIN !== true && new URL(candidate).hostname === 'api.r2rmarketingdigital.com.br') {
           try { localStorage.removeItem('r2r_api_base'); } catch (e) {}
           continue;
         }

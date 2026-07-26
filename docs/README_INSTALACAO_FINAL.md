@@ -194,11 +194,11 @@ Webhook Evolution recomendado:
 Se a tela mostrar "Preencha a URL da Evolution API e a API Key Global antes de conectar", valide primeiro o backend:
 
 ```bash
-curl https://api.r2rmarketingdigital.com.br/health
-curl https://api.r2rmarketingdigital.com.br/api/config
+curl https://crm.r2rmarketingdigital.com.br/api/health
+curl https://crm.r2rmarketingdigital.com.br/api/config
 ```
 
-As duas rotas precisam retornar JSON do backend. Se retornarem `502 Gateway Incorreto`, o backend Node esta fora do ar no EasyPanel ou a porta/start command esta incorreta. Se `https://crm.r2rmarketingdigital.com.br/api/health` retornar `index.html`, o frontend esta tentando usar o dominio estatico como API; publique `frontend-public_html/config.js` atualizado ou limpe `localStorage.r2r_api_base` no navegador.
+As duas rotas precisam retornar JSON do backend. Se retornarem `502 Gateway Incorreto`, o backend Node esta fora do ar no EasyPanel ou a porta/start command esta incorreta. Se `https://crm.r2rmarketingdigital.com.br/api/health` retornar `index.html`, o dominio ainda esta servindo uma copia estatica antiga; aponte o dominio para o app Node do EasyPanel e limpe `localStorage.r2r_api_base` no navegador.
 
 Para Evolution, a URL deve existir publicamente e com protocolo, por exemplo `https://evolution.seudominio.com.br`. Se o dominio do EasyPanel nao resolver DNS, o backend nao consegue gerar QR Code. A tela normaliza URL digitada sem `https://`, mas o dominio ainda precisa estar online.
 

@@ -82,10 +82,10 @@ Data da entrega: 2026-07-04
 - Adicionado status de Google em `/api/google/status` para estrutura futura de OAuth/Ads.
 - Ajustado `EVOLUTION_INSTANCE_NAME` como nome preferencial, mantendo `EVOLUTION_INSTANCE` como alias legado.
 - Atualizado `.env.example` com variaveis de deploy, Supabase, JWT futuro e Evolution API.
-- Ajustado `frontend-public_html/config.js` para apontar a API publica para `https://api.r2rmarketingdigital.com.br`.
+- Ajustado `frontend-public_html/config.js` para preferir o mesmo dominio do app Node publicado.
 - Documentado diagnostico para quando `/api/health` retorna HTML ou a API retorna 502.
 - Adicionada deteccao no frontend para rejeitar `/api/*` quando o dominio estatico devolve HTML em vez de JSON.
-- Adicionado fallback automatico do frontend para `https://api.r2rmarketingdigital.com.br` quando o CRM roda em `https://crm.r2rmarketingdigital.com.br`.
+- Removido fallback automatico para o subdominio de API quebrado quando o CRM roda em `https://crm.r2rmarketingdigital.com.br`.
 - Normalizada URL da Evolution sem protocolo, convertendo `evolution.dominio.com` para `https://evolution.dominio.com`.
 - Melhoradas mensagens quando a Evolution API esta inacessivel ou o dominio nao resolve no EasyPanel.
 - Reforcado fluxo de QR Code: o botao Conectar agora tambem envia a configuracao digitada para o backend quando o usuario e admin, evitando falso "nao configurado" se a persistencia ainda nao refletiu.

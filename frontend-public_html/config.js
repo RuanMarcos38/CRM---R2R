@@ -34,6 +34,7 @@ function r2rDefaultApiBase() {
 }
 
 function r2rIgnoreKnownBrokenApiBase(value) {
+  if (window.R2R_ALLOW_API_SUBDOMAIN === true) return false;
   try {
     var host = new URL(value).hostname;
     return host === 'api.r2rmarketingdigital.com.br';
@@ -57,8 +58,8 @@ window.R2R_REAL_MODE = true;
 
   function appendScript() {
     var script = document.createElement('script');
-    script.src = src;
     script.async = false;
+    script.src = src;
     (document.head || document.documentElement).appendChild(script);
   }
 

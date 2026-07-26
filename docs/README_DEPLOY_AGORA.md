@@ -25,7 +25,7 @@ node server.js
 https://crm.r2rmarketingdigital.com.br
 ```
 
-9. Se usar o dominio separado da API, ele tambem deve apontar para este mesmo app Node:
+9. Se usar o dominio separado da API, ele tambem deve apontar para este mesmo app Node antes de ser salvo no CRM:
 
 ```text
 https://api.r2rmarketingdigital.com.br
@@ -35,10 +35,9 @@ https://api.r2rmarketingdigital.com.br
 
 ```text
 https://crm.r2rmarketingdigital.com.br/api/health
-https://api.r2rmarketingdigital.com.br/api/health
 ```
 
-Precisa retornar JSON com `"status": "online"`.
+Precisa retornar JSON com `"status": "online"`. Teste `https://api.r2rmarketingdigital.com.br/api/health` apenas se o subdominio separado estiver configurado no mesmo servico.
 
 ## Frontend
 
@@ -66,6 +65,6 @@ EVOLUTION_INSTANCE=Ruan
 
 1. `https://crm.r2rmarketingdigital.com.br/api/health` retorna JSON.
 2. `https://crm.r2rmarketingdigital.com.br/api/config` retorna JSON.
-3. `https://crm.r2rmarketingdigital.com.br/assets/crm-saas-bridge.js` contem `20260725-backend-only-evolution`.
+3. `https://crm.r2rmarketingdigital.com.br/assets/crm-saas-bridge.js` contem `20260726-backend-origin-audit`.
 4. No CRM, Ajustes > WhatsApp > Salvar > Conectar.
 5. O QR Code deve vir de `/api/integrations/evolution/connect` ou `/api/integrations/evolution/qrcode`, nunca de chamadas diretas do navegador para a Evolution.
