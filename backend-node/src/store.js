@@ -3,6 +3,7 @@ const path = require('path');
 const { cleanUrl } = require('./http');
 const { boolEnv } = require('./env');
 const { sanitizePayload, randomToken, sha256 } = require('./security');
+const { applyOwnerDefaults, assertRecordOwnership, scopeQueryToOwner } = require('./access');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), '.data');
 const LOCAL_FILE = path.join(DATA_DIR, 'r2r-crm-local.json');
@@ -209,22 +210,26 @@ class LocalStore {
 
   async list(table, query = {}, ctx = {}, resource = {}) {
     const data = this.read();
+    query = scopeQueryToOwner(ctx, resource, query);
     const rows = scopeRows(data[table] || [], ctx, resource);
     return applyFilters(rows, query, resource);
   }
 
   async get(table, id, ctx = {}, resource = {}) {
-    const rows = await this.list(table, { limit: 500 }, ctx, resource);
-    return rows.find(row => row.id === id) || null;
+    const data = this.read();
+    const row = (data[table] || []).find(item => item.id === id && scopeRows([item], ctx, resource).length) || null;
+    assertRecordOwnership(ctx, resource, row);
+    return row;
   }
 
   async insert(table, payload, ctx = {}, resource = {}) {
     const data = this.read();
     if (!data[table]) data[table] = [];
-    const clean = sanitizePayload(payload, {
+    let clean = sanitizePayload(payload, {
       allowSensitive: resource && resource.allowSensitive,
       blockCompanyId: resource && resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)
     });
+    clean = applyOwnerDefaults(ctx, resource, clean);
     await this.assertTenantRelations(table, clean, ctx, resource);
     const row = { id: uuid(), ...clean, created_at: now(), updated_at: now() };
     if (resource && resource.companyScoped) row.empresa_id = clean.empresa_id || ctx.empresaId;
@@ -242,7 +247,9 @@ class LocalStore {
       error.statusCode = 404;
       throw error;
     }
-    const clean = sanitizePayload(payload, { allowSensitive: resource && resource.allowSensitive, blockCompanyId: true });
+    let clean = sanitizePayload(payload, { allowSensitive: resource && resource.allowSensitive, blockCompanyId: true });
+    assertRecordOwnership(ctx, resource, rows[index]);
+    clean = applyOwnerDefaults(ctx, resource, clean, { setDefault: false });
     await this.assertTenantRelations(table, { ...rows[index], ...clean }, ctx, resource);
     rows[index] = { ...rows[index], ...clean, updated_at: now() };
     this.write(data);
@@ -258,6 +265,7 @@ class LocalStore {
       error.statusCode = 404;
       throw error;
     }
+    assertRecordOwnership(ctx, resource, row);
     data[table] = rows.filter(item => item.id !== id);
     this.write(data);
     return row;
@@ -340,6 +348,7 @@ class SupabaseStore {
   }
 
   queryString(table, query = {}, ctx = {}, resource = {}) {
+    query = scopeQueryToOwner(ctx, resource, query);
     const params = new URLSearchParams();
     params.set('select', query.select || '*');
 
@@ -380,14 +389,17 @@ class SupabaseStore {
     params.set('id', `eq.${id}`);
     if (resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)) params.set('empresa_id', `eq.${ctx.empresaId}`);
     const data = await this.request(`/${table}?${params.toString()}`);
-    return data[0] || null;
+    const row = data[0] || null;
+    assertRecordOwnership(ctx, resource, row);
+    return row;
   }
 
   async insert(table, payload, ctx = {}, resource = {}) {
-    const clean = sanitizePayload(payload, {
+    let clean = sanitizePayload(payload, {
       allowSensitive: resource && resource.allowSensitive,
       blockCompanyId: resource && resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)
     });
+    clean = applyOwnerDefaults(ctx, resource, clean);
     if (resource.companyScoped && !clean.empresa_id && !ctx.system) clean.empresa_id = ctx.empresaId;
     await this.assertTenantRelations(table, clean, ctx, resource);
     const data = await this.request(`/${table}`, {
@@ -399,8 +411,10 @@ class SupabaseStore {
   }
 
   async update(table, id, payload, ctx = {}, resource = {}) {
-    const clean = sanitizePayload(payload, { allowSensitive: resource && resource.allowSensitive, blockCompanyId: true });
+    let clean = sanitizePayload(payload, { allowSensitive: resource && resource.allowSensitive, blockCompanyId: true });
     const current = resource.companyScoped ? await this.get(table, id, ctx, resource) : null;
+    assertRecordOwnership(ctx, resource, current);
+    clean = applyOwnerDefaults(ctx, resource, clean, { setDefault: false });
     await this.assertTenantRelations(table, { ...(current || {}), ...clean }, ctx, resource);
     const params = new URLSearchParams();
     params.set('id', `eq.${id}`);
@@ -420,6 +434,8 @@ class SupabaseStore {
   }
 
   async remove(table, id, ctx = {}, resource = {}) {
+    const current = resource.companyScoped ? await this.get(table, id, ctx, resource) : null;
+    assertRecordOwnership(ctx, resource, current);
     const params = new URLSearchParams();
     params.set('id', `eq.${id}`);
     if (resource.companyScoped && !ctx.system && !(ctx.permissions && ctx.permissions.super_admin)) params.set('empresa_id', `eq.${ctx.empresaId}`);
