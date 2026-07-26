@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '20260726-backend-origin';
+  var VERSION = '20260726-whatsapp-connected-qr';
   if (window.R2R_EVOLUTION_RUNTIME_FIX === VERSION) return;
   window.R2R_EVOLUTION_RUNTIME_FIX = VERSION;
 
@@ -230,6 +230,9 @@
   window.testarEvoAPI = async function () {
     try {
       var data = await apiFetch('/api/integrations/evolution/status', { method: 'GET' });
+      if (data.connected) {
+        setQrMessage('WhatsApp ja esta conectado. Para gerar um novo QR Code, clique em Desconectar e depois em Conectar.', '#166534');
+      }
       toast(data.connected ? 'WhatsApp conectado.' : (data.message || 'Status WhatsApp atualizado.'), data.connected ? 'success' : 'info');
       return data;
     } catch (error) {
@@ -249,6 +252,10 @@
         body: JSON.stringify({ instance: cfg.instance })
       });
       if (renderQr(data)) return toast('QR Code gerado pelo backend.', 'success');
+      if (data.connected || data.status === 'open') {
+        setQrMessage(data.message || 'WhatsApp ja esta conectado. Para gerar outro QR Code, desconecte a instancia primeiro.', '#166534');
+        return toast('WhatsApp ja esta conectado.', 'success');
+      }
       if (data.pairing_code) {
         setQrMessage('Codigo de pareamento: ' + data.pairing_code, '#334155');
         return toast('A Evolution retornou codigo de pareamento.', 'info');
@@ -264,6 +271,7 @@
   window.desconectarWA = async function () {
     try {
       await apiFetch('/api/integrations/evolution/disconnect', { method: 'POST', body: JSON.stringify({}) });
+      setQrMessage('WhatsApp desconectado. Clique em Conectar para gerar um novo QR Code.', '#334155');
       toast('Comando de desconexao enviado.', 'success');
     } catch (error) {
       toast('Erro ao desconectar: ' + error.message, 'error');

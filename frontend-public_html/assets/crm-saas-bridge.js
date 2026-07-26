@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.R2R_BRIDGE_VERSION = '20260726-backend-origin-audit';
+  window.R2R_BRIDGE_VERSION = '20260726-whatsapp-connected-qr';
   console.log('[R2R] Backend bridge version', window.R2R_BRIDGE_VERSION);
 
   var TABLE_ENDPOINTS = {
@@ -758,6 +758,9 @@
       var txt = byId('waStatusTxt');
       if (dot) dot.style.background = data.connected ? '#22c55e' : '#f97316';
       if (txt) txt.textContent = data.connected ? 'Conectado' : (data.configured ? 'Configurado, aguardando conexao' : 'Nao configurado');
+      if (data.connected) {
+        setQrMessage('WhatsApp ja esta conectado. Para gerar um novo QR Code, clique em Desconectar e depois em Conectar.', 'success');
+      }
       if (!data.configured) setQrMessage(data.message || 'WhatsApp nao configurado. Preencha URL, API Key e instancia.', 'error');
       toast(data.connected ? 'WhatsApp conectado.' : (data.message || 'Status WhatsApp atualizado.'), data.connected ? 'success' : 'info');
     } catch (error) {
@@ -782,6 +785,9 @@
         toast(data.message || 'WhatsApp nao configurado.', 'warn');
       } else if (renderQr(qr)) {
         toast('QR Code gerado pelo backend.', 'success');
+      } else if (data.connected || data.status === 'open') {
+        setQrMessage(data.message || 'WhatsApp ja esta conectado. Para gerar outro QR Code, desconecte a instancia primeiro.', 'success');
+        toast('WhatsApp ja esta conectado.', 'success');
       } else if (data.pairing_code) {
         setQrMessage('A Evolution retornou codigo de pareamento: ' + data.pairing_code, 'warn');
         toast('A Evolution retornou codigo de pareamento, nao QR Code.', 'warn');
@@ -798,6 +804,11 @@
   window.desconectarWA = async function () {
     try {
       await apiFetch('/api/whatsapp/disconnect', { method: 'POST', body: JSON.stringify({}) });
+      var dot = byId('waStatusDot');
+      var txt = byId('waStatusTxt');
+      if (dot) dot.style.background = '#f97316';
+      if (txt) txt.textContent = 'Desconectado';
+      setQrMessage('WhatsApp desconectado. Clique em Conectar para gerar um novo QR Code.', 'warn');
       toast('Comando de desconexao enviado.', 'success');
     } catch (error) {
       toast('Erro ao desconectar: ' + error.message, 'error');

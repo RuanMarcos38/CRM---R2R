@@ -65,6 +65,6 @@ EVOLUTION_INSTANCE=Ruan
 
 1. `https://crm.r2rmarketingdigital.com.br/api/health` retorna JSON.
 2. `https://crm.r2rmarketingdigital.com.br/api/config` retorna JSON.
-3. `https://crm.r2rmarketingdigital.com.br/assets/crm-saas-bridge.js` contem `20260726-backend-origin-audit`.
+3. `https://crm.r2rmarketingdigital.com.br/assets/crm-saas-bridge.js` contem `20260726-whatsapp-connected-qr`.
 4. No CRM, Ajustes > WhatsApp > Salvar > Conectar.
 5. O QR Code deve vir de `/api/integrations/evolution/connect` ou `/api/integrations/evolution/qrcode`, nunca de chamadas diretas do navegador para a Evolution.
