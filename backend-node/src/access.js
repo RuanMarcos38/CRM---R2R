@@ -52,6 +52,17 @@ const ADMIN_TABLES = new Set([
   'feature_flags'
 ]);
 
+const OWNER_FIELDS = {
+  leads: ['responsavel_id', 'vendedor_id'],
+  clientes: ['responsavel_id'],
+  oportunidades: ['responsavel_id'],
+  atividades: ['usuario_id'],
+  tarefas: ['responsavel_id'],
+  conversas: ['responsavel_id'],
+  mensagens: ['usuario_id'],
+  notificacoes: ['usuario_id']
+};
+
 function forbidden(message = 'Permissao insuficiente.') {
   const error = new Error(message);
   error.statusCode = 403;
@@ -73,6 +84,51 @@ function isCompanyAdmin(ctx) {
 
 function isManager(ctx) {
   return !!(ctx && ctx.permissions && ctx.permissions.manager);
+}
+
+function isRegularUser(ctx) {
+  const permissions = ctx && ctx.permissions || {};
+  return !!ctx && !permissions.super_admin && !permissions.company_admin && !permissions.admin && !permissions.manager;
+}
+
+function ownerFieldsFor(resource) {
+  return OWNER_FIELDS[resource && resource.table || ''] || [];
+}
+
+function ownedByProfile(row, profileId, fields) {
+  if (!row || !profileId || !fields.length) return true;
+  return fields.some(field => String(row[field] || '') === String(profileId));
+}
+
+function scopeQueryToOwner(ctx, resource, query = {}) {
+  if (!isRegularUser(ctx)) return query;
+  const fields = ownerFieldsFor(resource);
+  const profileId = ctx.profile && ctx.profile.id;
+  if (!fields.length || !profileId) return query;
+  const scoped = { ...query };
+  if (!fields.some(field => scoped[`eq.${field}`])) scoped[`eq.${fields[0]}`] = profileId;
+  return scoped;
+}
+
+function assertRecordOwnership(ctx, resource, row) {
+  if (!isRegularUser(ctx)) return true;
+  const fields = ownerFieldsFor(resource);
+  const profileId = ctx.profile && ctx.profile.id;
+  if (!fields.length || ownedByProfile(row, profileId, fields)) return true;
+  throw forbidden('Registro fora do escopo do usuario.');
+}
+
+function applyOwnerDefaults(ctx, resource, payload = {}, options = {}) {
+  if (!isRegularUser(ctx)) return payload;
+  const fields = ownerFieldsFor(resource);
+  const profileId = ctx.profile && ctx.profile.id;
+  if (!fields.length || !profileId) return payload;
+  const out = { ...payload };
+  const hasOwner = fields.some(field => out[field]);
+  if (!hasOwner && options.setDefault !== false) out[fields[0]] = profileId;
+  if (!hasOwner) return out;
+  if (!ownedByProfile(out, profileId, fields)) throw forbidden('Usuario comum nao pode atribuir registro para outro responsavel.');
+  return out;
 }
 
 function canUseCustomPermission(ctx, moduleName, action) {
@@ -169,11 +225,14 @@ module.exports = {
   assertFeatureEnabled,
   assertResourceAccess,
   apiKeyAllows,
+  applyOwnerDefaults,
+  assertRecordOwnership,
   featureForPath,
   featureMap,
   forbidden,
   globalIntegrationFallbackAllowed,
   isCompanyAdmin,
+  scopeQueryToOwner,
   normalizeAction,
   normalizeFeatureName
 };
