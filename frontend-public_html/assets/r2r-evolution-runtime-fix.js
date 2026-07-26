@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '20260726-whatsapp-connected-qr';
+  var VERSION = '20260726-n8n-backend-probe';
   if (window.R2R_EVOLUTION_RUNTIME_FIX === VERSION) return;
   window.R2R_EVOLUTION_RUNTIME_FIX = VERSION;
 

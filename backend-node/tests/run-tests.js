@@ -381,10 +381,37 @@ test('servidor responde health, login, rotas protegidas e Evolution sem config',
       out = await request(base, 'POST', '/api/n8n/test', {}, token);
       assert.strictEqual(out.res.status, 200);
       assert.strictEqual(out.data.configured, true);
-      assert.strictEqual(out.data.status, 200);
+      assert.strictEqual(out.data.status, 'online');
+      assert.strictEqual(out.data.webhook.status, 200);
       assert.strictEqual(n8nHit, true);
     } finally {
       await new Promise(resolve => fakeN8n.close(resolve));
+    }
+
+    let n8nApiHit = false;
+    const fakeN8nApi = http.createServer((req, res) => {
+      if (req.url === '/api/v1/workflows?limit=1' && req.headers['x-n8n-api-key'] === 'n8n-test') {
+        n8nApiHit = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false }));
+    });
+    await new Promise(resolve => fakeN8nApi.listen(0, '127.0.0.1', resolve));
+    const fakeN8nApiUrl = 'http://127.0.0.1:' + fakeN8nApi.address().port;
+    try {
+      out = await request(base, 'POST', '/api/integrations/n8n', { url: fakeN8nApiUrl, webhookUrl: '', apiKey: 'n8n-test' }, token);
+      assert.strictEqual(out.res.status, 200);
+      out = await request(base, 'POST', '/api/n8n/test', {}, token);
+      assert.strictEqual(out.res.status, 200);
+      assert.strictEqual(out.data.ok, true);
+      assert.strictEqual(out.data.api.status, 200);
+      assert.strictEqual(out.data.api.authenticated, true);
+      assert.strictEqual(n8nApiHit, true);
+    } finally {
+      await new Promise(resolve => fakeN8nApi.close(resolve));
     }
 
     out = await request(base, 'POST', '/api/integrations/meta', {

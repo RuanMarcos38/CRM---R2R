@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.R2R_BRIDGE_VERSION = '20260726-whatsapp-connected-qr';
+  window.R2R_BRIDGE_VERSION = '20260726-n8n-backend-probe';
   console.log('[R2R] Backend bridge version', window.R2R_BRIDGE_VERSION);
 
   var TABLE_ENDPOINTS = {
@@ -924,7 +924,20 @@
   window.testarN8N = window.testarWebhookN8N = async function () {
     try {
       var data = await apiFetch('/api/n8n/test', { method: 'POST', body: JSON.stringify({}) });
-      toast(data.configured ? 'N8N testado pelo backend.' : (data.message || 'N8N nao configurado.'), data.configured ? 'success' : 'info');
+      var result = byId('n8nTestResult');
+      if (result) {
+        result.style.display = 'block';
+        result.style.color = data.ok ? '#86efac' : '#fca5a5';
+        result.textContent = data.message || (data.ok ? 'N8N acessivel pelo backend.' : 'N8N nao respondeu pelo backend.');
+      }
+      var badge = byId('n8nBadge') || byId('n8nStatusBadge');
+      if (badge) {
+        badge.textContent = data.ok ? 'Conectado' : (data.configured ? 'Falha no teste' : 'Nao configurado');
+        badge.style.background = data.ok ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.12)';
+        badge.style.color = data.ok ? '#86efac' : '#fca5a5';
+      }
+      toast(data.message || (data.ok ? 'N8N testado pelo backend.' : 'N8N nao respondeu pelo backend.'), data.ok ? 'success' : (data.configured ? 'error' : 'info'));
+      return data;
     } catch (error) {
       toast('Erro N8N: ' + error.message, 'error');
     }

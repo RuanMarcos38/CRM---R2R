@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const RUNTIME_PATCH_VERSION = '20260726-whatsapp-connected-qr';
+const RUNTIME_PATCH_VERSION = '20260726-n8n-backend-probe';
 const originalReadFileSync = fs.readFileSync.bind(fs);
 
 fs.readFileSync = function patchedReadFileSync(filePath, options) {

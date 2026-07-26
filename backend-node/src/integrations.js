@@ -98,7 +98,9 @@ function integrationStatus() {
       ads_configured: !!(process.env.GOOGLE_DEVELOPER_TOKEN && process.env.GOOGLE_CUSTOMER_ID)
     },
     n8n: {
-      configured: !!process.env.N8N_WEBHOOK_URL
+      configured: !!(process.env.N8N_WEBHOOK_URL || process.env.N8N_API_URL || process.env.N8N_URL),
+      api_configured: !!((process.env.N8N_API_URL || process.env.N8N_URL) && (process.env.N8N_API_KEY || process.env.N8N_KEY)),
+      webhook_configured: !!process.env.N8N_WEBHOOK_URL
     },
     billing: {
       configured: ['STARTER', 'BUSINESS', 'PREMIUM'].some(plan => !!process.env[`CHECKOUT_${plan}_URL`]),

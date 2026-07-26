@@ -677,6 +677,113 @@ function firstText(...values) {
   return '';
 }
 
+function integrationTimeoutMs() {
+  const value = Number(process.env.INTEGRATION_TIMEOUT_MS || 20_000);
+  return Number.isFinite(value) && value > 0 ? value : 20_000;
+}
+
+async function fetchWithIntegrationTimeout(targetUrl, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), integrationTimeoutMs());
+  try {
+    return await fetch(targetUrl, { ...options, signal: options.signal || controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function joinUrl(base, pathname) {
+  const root = cleanUrl(base);
+  if (!root) return '';
+  return `${root}${String(pathname || '').startsWith('/') ? '' : '/'}${pathname || ''}`;
+}
+
+function n8nApiKeyFromEnv() {
+  return firstText(process.env.N8N_API_KEY, process.env.N8N_KEY);
+}
+
+function n8nApiUrlFromEnv() {
+  return firstText(process.env.N8N_API_URL, process.env.N8N_URL);
+}
+
+function looksLikeWebhookUrl(value) {
+  try {
+    const pathname = new URL(cleanUrl(value)).pathname.toLowerCase();
+    return pathname === '/webhook' || pathname === '/webhook-test' || pathname.includes('/webhook/') || pathname.includes('/webhook-test/');
+  } catch (_) {
+    return false;
+  }
+}
+
+async function probeN8nApi(baseUrl, apiKey) {
+  const base = cleanUrl(baseUrl);
+  if (!base) return { configured: false, ok: false, message: 'URL base do N8N nao configurada.' };
+
+  const headers = { Accept: 'application/json' };
+  const path = apiKey ? '/api/v1/workflows?limit=1' : '/healthz';
+  if (apiKey) headers['X-N8N-API-KEY'] = apiKey;
+
+  try {
+    const response = await fetchWithIntegrationTimeout(joinUrl(base, path), { method: 'GET', headers });
+    const ok = apiKey ? response.ok : response.status < 500;
+    return {
+      configured: true,
+      ok,
+      status: response.status,
+      endpoint: path,
+      authenticated: apiKey ? response.status !== 401 && response.status !== 403 : null,
+      message: ok
+        ? (apiKey ? 'API do N8N acessivel e API Key aceita.' : 'URL base do N8N acessivel.')
+        : (apiKey ? 'N8N respondeu, mas recusou a API Key ou a rota REST.' : 'URL base do N8N respondeu com erro.')
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      ok: false,
+      status: 'unreachable',
+      endpoint: path,
+      error: error.message,
+      message: 'URL base do N8N inacessivel pelo backend.'
+    };
+  }
+}
+
+async function probeN8nWebhook(webhookUrl, ctx) {
+  const webhook = cleanUrl(webhookUrl);
+  if (!webhook) return { configured: false, ok: false, message: 'Webhook do N8N nao configurado.' };
+  if (!looksLikeWebhookUrl(webhook)) {
+    return {
+      configured: false,
+      skipped: true,
+      ok: false,
+      message: 'URL informada nao parece webhook do N8N; teste de webhook ignorado.'
+    };
+  }
+
+  const payload = { test: true, source: 'r2r-crm', empresa_id: ctx.empresaId, at: new Date().toISOString() };
+  try {
+    const response = await fetchWithIntegrationTimeout(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return {
+      configured: true,
+      ok: response.ok,
+      status: response.status,
+      message: response.ok ? 'Webhook do N8N respondeu ao teste.' : 'Webhook do N8N respondeu com erro.'
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      ok: false,
+      status: 'unreachable',
+      error: error.message,
+      message: 'Webhook do N8N inacessivel pelo backend.'
+    };
+  }
+}
+
 function extractMessageText(message = {}) {
   return firstText(
     message.conversation,
@@ -1382,15 +1489,41 @@ async function handleIntegrations(req, res, url, ctx) {
     await assertFeatureEnabled(store, ctx, 'n8n');
     if (!isCompanyAdmin(ctx)) return sendJson(req, res, 403, { ok: false, error: 'Somente Administrador da Empresa pode testar N8N.' });
     const n8n = await getIntegrationConfig(ctx, 'n8n');
-    const webhook = n8n.config.webhookUrl || n8n.config.webhook_url || n8n.config.webhook || (globalIntegrationFallbackAllowed(ctx) ? process.env.N8N_WEBHOOK_URL : '') || n8n.config.url || '';
-    if (!webhook) return sendJson(req, res, 200, { ok: true, configured: false, message: 'N8N_WEBHOOK_URL nao configurado.' });
-    const payload = { test: true, source: 'r2r-crm', empresa_id: ctx.empresaId, at: new Date().toISOString() };
-    try {
-      const response = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      return sendJson(req, res, 200, { ok: true, configured: true, status: response.status });
-    } catch (error) {
-      return sendJson(req, res, 200, { ok: false, success: false, configured: true, status: 'unreachable', error: error.message, message: 'N8N configurado, mas o webhook nao respondeu.' });
+    const body = await readBody(req);
+    const allowGlobal = globalIntegrationFallbackAllowed(ctx);
+    const baseUrl = firstText(body.url, body.baseUrl, body.base_url, n8n.config.url, n8n.config.baseUrl, n8n.config.base_url, allowGlobal ? n8nApiUrlFromEnv() : '');
+    const apiKey = firstText(body.apiKey, body.api_key, body.key, n8n.config.apiKey, n8n.config.api_key, n8n.config.key, allowGlobal ? n8nApiKeyFromEnv() : '');
+    const webhook = firstText(body.webhookUrl, body.webhook_url, body.webhook, n8n.config.webhookUrl, n8n.config.webhook_url, n8n.config.webhook, allowGlobal ? process.env.N8N_WEBHOOK_URL : '');
+
+    if (!baseUrl && !webhook) {
+      return sendJson(req, res, 200, {
+        ok: false,
+        success: false,
+        configured: false,
+        status: 'not_configured',
+        message: 'Configure a URL base do N8N ou a URL de webhook.'
+      });
     }
+
+    const api = await probeN8nApi(baseUrl, apiKey);
+    const webhookCheck = await probeN8nWebhook(webhook, ctx);
+    const ok = (api.configured && api.ok) || (webhookCheck.configured && webhookCheck.ok);
+    const status = ok ? 'online' : 'unreachable';
+    const message = ok
+      ? (api.ok ? api.message : webhookCheck.message)
+      : (api.configured || webhookCheck.configured
+        ? 'N8N configurado, mas nenhum teste respondeu com sucesso pelo backend.'
+        : 'N8N nao configurado.');
+
+    return sendJson(req, res, 200, {
+      ok,
+      success: ok,
+      configured: true,
+      status,
+      api,
+      webhook: webhookCheck,
+      message
+    });
   }
 
   return null;

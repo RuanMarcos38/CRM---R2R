@@ -52,7 +52,7 @@ window.R2R_API_BASE = r2rConfiguredApiBase || r2rCleanApiBase(r2rStoredApiBase) 
 window.R2R_REAL_MODE = true;
 
 (function r2rLoadEvolutionRuntimeFix() {
-  var src = 'assets/r2r-evolution-runtime-fix.js?v=20260726-whatsapp-connected-qr';
+  var src = 'assets/r2r-evolution-runtime-fix.js?v=20260726-n8n-backend-probe';
   if (typeof document === 'undefined') return;
   if (document.querySelector('script[src*="r2r-evolution-runtime-fix.js"]')) return;
 
