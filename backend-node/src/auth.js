@@ -95,11 +95,16 @@ async function resolveAuthContext(req, store) {
     throw authError('Usuario inativo ou bloqueado.', 403);
   }
 
+  const permissions = permissionsFromProfile(profile);
+  if (!permissions.super_admin && !profile.empresa_id) {
+    throw authError('Usuario sem empresa vinculada. Vincule o usuario a uma empresa antes de acessar o CRM.', 403);
+  }
+
   return {
     user: { id: authUser.id, email: authUser.email },
     profile,
     empresaId: profile.empresa_id,
-    permissions: permissionsFromProfile(profile)
+    permissions
   };
 }
 
@@ -112,6 +117,7 @@ async function verifyApiKey(req, store) {
   if (!raw) return null;
   const row = await store.findApiKey(sha256(raw));
   if (!row) return null;
+  if (!row.empresa_id) return null;
   return {
     system: false,
     apiKey: row,
