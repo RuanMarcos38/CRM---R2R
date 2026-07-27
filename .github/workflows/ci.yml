@@ -56,3 +56,20 @@ jobs:
           done
           docker logs r2r-crm-test || true
           exit 1
+
+  deploy-easypanel:
+    name: Deploy EasyPanel
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 5
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger EasyPanel deployment
+        env:
+          EASYPANEL_DEPLOY_URL: ${{ secrets.EASYPANEL_DEPLOY_URL }}
+        run: |
+          if [ -z "$EASYPANEL_DEPLOY_URL" ]; then
+            echo "EASYPANEL_DEPLOY_URL secret is not configured."
+            exit 1
+          fi
+          curl --fail --show-error --silent --request POST "$EASYPANEL_DEPLOY_URL"
