@@ -25,14 +25,22 @@ jobs:
         with:
           node-version: 20
 
-      - name: Wait for EasyPanel auto deploy and check production
+      - name: Wait for EasyPanel auto deploy and check app endpoint
+        env:
+          R2R_API_HOST: r2rmarketingdigital-crmbackend.ke4n49.easypanel.host
         run: |
           for attempt in {1..12}; do
-            echo "Production check attempt ${attempt}/12"
+            echo "EasyPanel app check attempt ${attempt}/12"
             if node scripts/check-production.mjs; then
               exit 0
             fi
             sleep 30
           done
-          echo "Production did not become healthy after 6 minutes."
+          echo "EasyPanel app did not become healthy after 6 minutes."
           exit 1
+
+      - name: Diagnose custom CRM domain
+        continue-on-error: true
+        env:
+          R2R_API_HOST: crm.r2rmarketingdigital.com.br
+        run: node scripts/check-production.mjs
