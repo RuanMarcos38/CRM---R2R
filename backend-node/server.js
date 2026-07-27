@@ -221,8 +221,23 @@ async function handleLogin(req, res) {
   });
 }
 
+function requestOrigin(req) {
+  const proto = (req.protocol || req.headers['x-forwarded-proto'] || 'http').split(',')[0];
+  return cleanUrl(`${proto}://${req.headers.host || `localhost:${PORT}`}`);
+}
+
+function isBrokenApiSubdomain(url) {
+  try {
+    return new URL(url).hostname === 'api.r2rmarketingdigital.com.br' && process.env.R2R_ALLOW_API_SUBDOMAIN !== 'true';
+  } catch (_) {
+    return false;
+  }
+}
+
 function publicConfig(req) {
-  const apiBase = cleanUrl(process.env.PUBLIC_URL || process.env.APP_URL || `${req.protocol || 'http'}://${req.headers.host || `localhost:${PORT}`}`);
+  const currentOrigin = requestOrigin(req);
+  const configuredApiBase = cleanUrl(process.env.PUBLIC_URL || process.env.APP_URL || currentOrigin);
+  const apiBase = isBrokenApiSubdomain(configuredApiBase) && !isBrokenApiSubdomain(currentOrigin) ? currentOrigin : configuredApiBase;
   return {
     ok: true,
     version: VERSION,
