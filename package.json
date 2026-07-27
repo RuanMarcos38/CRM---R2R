@@ -5,8 +5,10 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "cd backend-node && npm test",
-    "check": "node --check server.js && node --check backend-node/server.js && node --check scripts/check-production.mjs",
+    "check": "node --check server.js",
+    "test": "node --check server.js",
+    "check:backend": "node --check backend-node/server.js && node --check scripts/check-production.mjs",
+    "test:backend": "cd backend-node && npm test",
     "check:production": "node scripts/check-production.mjs"
   },
   "engines": {

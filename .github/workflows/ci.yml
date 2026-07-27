@@ -28,10 +28,13 @@ jobs:
         run: npm ci --omit=dev
 
       - name: Validate JavaScript
-        run: npm run check
+        run: npm run check && npm run check:backend
+
+      - name: Run root smoke test
+        run: npm test
 
       - name: Run backend tests
-        run: npm test
+        run: npm run test:backend
 
       - name: Build Docker image
         run: docker build -t r2r-crm-saas:${{ github.sha }} .
