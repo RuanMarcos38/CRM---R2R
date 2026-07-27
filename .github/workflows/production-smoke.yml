@@ -1,8 +1,10 @@
 name: Production SSL and API smoke test
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Validate R2R CRM"]
     branches: [main]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -15,7 +17,8 @@ concurrency:
 jobs:
   production-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,19 +31,21 @@ jobs:
       - name: Wait for EasyPanel auto deploy and check app endpoint
         env:
           R2R_API_HOST: r2rmarketingdigital-crmbackend.ke4n49.easypanel.host
+          R2R_CHECK_TIMEOUT_MS: 30000
         run: |
-          for attempt in {1..12}; do
-            echo "EasyPanel app check attempt ${attempt}/12"
+          for attempt in {1..20}; do
+            echo "EasyPanel app check attempt ${attempt}/20"
             if node scripts/check-production.mjs; then
               exit 0
             fi
-            sleep 30
+            sleep 45
           done
-          echo "EasyPanel app did not become healthy after 6 minutes."
+          echo "EasyPanel app did not become healthy after 15 minutes."
           exit 1
 
       - name: Diagnose custom CRM domain
         continue-on-error: true
         env:
           R2R_API_HOST: crm.r2rmarketingdigital.com.br
+          R2R_CHECK_TIMEOUT_MS: 30000
         run: node scripts/check-production.mjs
