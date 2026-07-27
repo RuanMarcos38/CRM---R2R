@@ -37,7 +37,15 @@ jobs:
         run: npm run test:backend
 
       - name: Build Docker image
-        run: docker build -t r2r-crm-saas:${{ github.sha }} .
+        run: |
+          for attempt in 1 2 3; do
+            echo "Docker build attempt ${attempt}/3"
+            if docker build -t r2r-crm-saas:${{ github.sha }} .; then
+              exit 0
+            fi
+            sleep 20
+          done
+          exit 1
 
       - name: Test container health
         run: |
