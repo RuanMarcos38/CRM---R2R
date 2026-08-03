@@ -245,6 +245,8 @@ tbody td{padding:12px 14px;font-size:.84rem}
 .chat-input:focus{border-color:var(--purple)}
 .send-btn{padding:10px 16px;background:var(--purple);border:none;border-radius:var(--radius2);color:#fff;cursor:pointer;transition:.15s;font-size:.9rem}
 .send-btn:hover{background:var(--purple2)}
+.emoji-item{cursor:pointer;padding:4px;border-radius:4px;transition:.2s}
+.emoji-item:hover{background:var(--bg3)}
 
 /* MODAL */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:.2s}
@@ -722,7 +724,31 @@ tbody td{padding:12px 14px;font-size:.84rem}
               <div id="emojiPicker" style="display:none;position:absolute;bottom:70px;left:16px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;z-index:100;width:280px;box-shadow:var(--shadow)">
                 <div style="font-size:.72rem;color:var(--gray2);margin-bottom:8px">Emojis frequentes</div>
                 <div style="display:flex;flex-wrap:wrap;gap:4px;font-size:22px">
-                  ${'😊😂❤️👍🙏😍🎉✅💪🔥😢😅🤔💯😘🤝👋🎯💰📊📱💬✔️⭐🚀'.split('').map(e=>`<span onclick="inserirEmoji('${e}')" style="cursor:pointer;padding:4px;border-radius:4px;hover:background:var(--bg3)">${e}</span>`).join('')}
+                  <span class="emoji-item" onclick="inserirEmoji('😊')">😊</span>
+                  <span class="emoji-item" onclick="inserirEmoji('😂')">😂</span>
+                  <span class="emoji-item" onclick="inserirEmoji('❤️')">❤️</span>
+                  <span class="emoji-item" onclick="inserirEmoji('👍')">👍</span>
+                  <span class="emoji-item" onclick="inserirEmoji('🙏')">🙏</span>
+                  <span class="emoji-item" onclick="inserirEmoji('😍')">😍</span>
+                  <span class="emoji-item" onclick="inserirEmoji('🎉')">🎉</span>
+                  <span class="emoji-item" onclick="inserirEmoji('✅')">✅</span>
+                  <span class="emoji-item" onclick="inserirEmoji('💪')">💪</span>
+                  <span class="emoji-item" onclick="inserirEmoji('🔥')">🔥</span>
+                  <span class="emoji-item" onclick="inserirEmoji('😢')">😢</span>
+                  <span class="emoji-item" onclick="inserirEmoji('😅')">😅</span>
+                  <span class="emoji-item" onclick="inserirEmoji('🤔')">🤔</span>
+                  <span class="emoji-item" onclick="inserirEmoji('💯')">💯</span>
+                  <span class="emoji-item" onclick="inserirEmoji('😘')">😘</span>
+                  <span class="emoji-item" onclick="inserirEmoji('🤝')">🤝</span>
+                  <span class="emoji-item" onclick="inserirEmoji('👋')">👋</span>
+                  <span class="emoji-item" onclick="inserirEmoji('🎯')">🎯</span>
+                  <span class="emoji-item" onclick="inserirEmoji('💰')">💰</span>
+                  <span class="emoji-item" onclick="inserirEmoji('📊')">📊</span>
+                  <span class="emoji-item" onclick="inserirEmoji('📱')">📱</span>
+                  <span class="emoji-item" onclick="inserirEmoji('💬')">💬</span>
+                  <span class="emoji-item" onclick="inserirEmoji('✔️')">✔️</span>
+                  <span class="emoji-item" onclick="inserirEmoji('⭐')">⭐</span>
+                  <span class="emoji-item" onclick="inserirEmoji('🚀')">🚀</span>
                 </div>
                 <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:.72rem;color:var(--gray2)">Clique para inserir</div>
               </div>
@@ -851,7 +877,7 @@ tbody td{padding:12px 14px;font-size:.84rem}
       </div>
 
       <!-- FINANCEIRO -->
-      <div class="page" id="page-financial" style="">
+      <div class="page" id="page-financial">
         <div id="financialRestricted" style="display:none;text-align:center;padding:60px 20px">
           <div style="font-size:48px;margin-bottom:16px">🔒</div>
           <h3 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:1.2rem;margin-bottom:8px">Área Restrita</h3>
