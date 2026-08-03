@@ -2,152 +2,145 @@
 // Nunca coloque aqui service_role, OpenAI key, Evolution key, Meta token,
 // N8N key ou qualquer segredo. No navegador ficam apenas URLs públicas.
 
-window.R2R_ALLOW_API_SUBDOMAIN = true;
+(function initializeR2RConfig(global) {
+  'use strict';
 
-window.R2R_CONFIG = Object.assign(
-  {},
-  window.R2R_CONFIG || {},
-  {
-    API_BASE_URL: 'https://api.r2rmarketingdigital.com.br',
-    APP_NAME: 'R2R CRM',
-    ENV: 'production',
-    SUPABASE_URL: 'https://uwzfgksmnqgaxtscwxow.supabase.co',
-    SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_mZUNYHM3JeRZXR8vWfVECA_7gCgTp7i'
+  var SUPABASE_URL =
+    'https://uwzfgksmnqgaxtscwxow.supabase.co';
+
+  var SUPABASE_PUBLISHABLE_KEY =
+    'sb_publishable_mZUNYHM3JeRZXR8vWfVECA_7gCgTp7i';
+
+  var API_BASE_URL =
+    'https://api.r2rmarketingdigital.com.br';
+
+  global.R2R_ALLOW_API_SUBDOMAIN = true;
+
+  global.R2R_CONFIG = Object.assign(
+    {},
+    global.R2R_CONFIG || {},
+    {
+      API_BASE_URL: API_BASE_URL,
+      APP_NAME: 'R2R CRM',
+      ENV: 'production',
+      SUPABASE_URL: SUPABASE_URL,
+      SUPABASE_PUBLISHABLE_KEY: SUPABASE_PUBLISHABLE_KEY
+    }
+  );
+
+  global.R2R_ADMIN_EMAIL =
+    global.R2R_ADMIN_EMAIL ||
+    'admin@r2rmarketingdigital.com.br';
+
+  global.R2R_SUPABASE_URL =
+    SUPABASE_URL;
+
+  global.R2R_SUPABASE_PUBLISHABLE_KEY =
+    SUPABASE_PUBLISHABLE_KEY;
+
+  global.R2R_SUPABASE_ANON_KEY =
+    SUPABASE_PUBLISHABLE_KEY;
+
+  global.R2R_API_BASE =
+    cleanUrl(API_BASE_URL);
+
+  global.R2R_REAL_MODE = true;
+
+  persistPublicConfig();
+  loadEvolutionRuntimeFix();
+
+  console.log('[R2R CONFIG]', {
+    apiBase: global.R2R_API_BASE,
+    supabaseUrl: global.R2R_SUPABASE_URL,
+    supabaseConfigured: Boolean(
+      global.R2R_SUPABASE_PUBLISHABLE_KEY
+    )
+  });
+
+  function cleanUrl(value) {
+    return String(value || '')
+      .trim()
+      .replace(/\/+$/, '');
   }
-);
 
-window.R2R_ADMIN_EMAIL =
-  window.R2R_ADMIN_EMAIL || 'admin@r2rmarketingdigital.com.br';
+  function persistPublicConfig() {
+    try {
+      localStorage.setItem(
+        'r2r_sb_url',
+        global.R2R_SUPABASE_URL
+      );
 
-window.R2R_SUPABASE_URL =
-  window.R2R_CONFIG.SUPABASE_URL || '';
+      localStorage.setItem(
+        'r2r_sb_anon_key',
+        global.R2R_SUPABASE_ANON_KEY
+      );
 
-window.R2R_SUPABASE_PUBLISHABLE_KEY =
-  window.R2R_CONFIG.SUPABASE_PUBLISHABLE_KEY || '';
+      localStorage.setItem(
+        'r2r_api_base',
+        global.R2R_API_BASE
+      );
+    } catch (error) {
+      console.warn(
+        '[R2R CONFIG] Não foi possível salvar a configuração local.',
+        error
+      );
+    }
+  }
 
-window.R2R_SUPABASE_ANON_KEY =
-  window.R2R_CONFIG.SUPABASE_PUBLISHABLE_KEY || '';
-
-var r2rStoredApiBase = '';
-
-try {
-  r2rStoredApiBase = localStorage.getItem('r2r_api_base') || '';
-} catch (e) {}
-
-function r2rCleanApiBase(value) {
-  return String(value || '')
-    .trim()
-    .replace(/\/$/, '');
-}
-
-function r2rDefaultApiBase() {
-  try {
-    var host = window.location.hostname;
-
-    if (host === 'localhost' || host === '127.0.0.1') {
-      return window.location.protocol + '//' + host + ':3000';
+  function loadEvolutionRuntimeFix() {
+    if (typeof document === 'undefined') {
+      return;
     }
 
-    return window.location.origin;
-  } catch (e) {
-    return '';
-  }
-}
+    if (
+      document.querySelector(
+        'script[src*="r2r-evolution-runtime-fix.js"]'
+      )
+    ) {
+      return;
+    }
 
-function r2rIgnoreKnownBrokenApiBase(value) {
-  if (window.R2R_ALLOW_API_SUBDOMAIN === true) {
-    return false;
-  }
+    var source =
+      'assets/r2r-evolution-runtime-fix.js' +
+      '?v=20260803-supabase-final';
 
-  try {
-    var host = new URL(value).hostname;
-    return host === 'api.r2rmarketingdigital.com.br';
-  } catch (e) {
-    return false;
-  }
-}
+    function appendScript() {
+      var target =
+        document.head ||
+        document.documentElement;
 
-var r2rConfiguredApiBase = r2rCleanApiBase(
-  window.R2R_API_BASE ||
-  window.R2R_CONFIG.API_BASE_URL ||
-  ''
-);
+      if (!target) {
+        return;
+      }
 
-if (
-  !r2rConfiguredApiBase &&
-  r2rIgnoreKnownBrokenApiBase(r2rStoredApiBase)
-) {
-  r2rStoredApiBase = '';
+      var script =
+        document.createElement('script');
 
-  try {
-    localStorage.removeItem('r2r_api_base');
-  } catch (e) {}
-}
+      script.async = false;
+      script.src = source;
 
-window.R2R_API_BASE =
-  r2rConfiguredApiBase ||
-  r2rCleanApiBase(r2rStoredApiBase) ||
-  r2rDefaultApiBase();
+      script.onerror = function () {
+        console.error(
+          '[R2R CONFIG] Falha ao carregar:',
+          source
+        );
+      };
 
-window.R2R_REAL_MODE = true;
+      target.appendChild(script);
+    }
 
-(function r2rLoadEvolutionRuntimeFix() {
-  var src =
-    'assets/r2r-evolution-runtime-fix.js?v=20260726-n8n-backend-probe';
+    if (
+      document.head ||
+      document.documentElement
+    ) {
+      appendScript();
+      return;
+    }
 
-  if (typeof document === 'undefined') {
-    return;
-  }
-
-  if (
-    document.querySelector(
-      'script[src*="r2r-evolution-runtime-fix.js"]'
-    )
-  ) {
-    return;
-  }
-
-  function appendScript() {
-    var script = document.createElement('script');
-
-    script.async = false;
-    script.src = src;
-
-    (document.head || document.documentElement).appendChild(script);
-  }
-
-  if (document.head || document.documentElement) {
-    appendScript();
-  } else {
     document.addEventListener(
       'DOMContentLoaded',
       appendScript,
       { once: true }
     );
   }
-})();
-
-try {
-  localStorage.setItem(
-    'r2r_sb_url',
-    window.R2R_SUPABASE_URL
-  );
-
-  localStorage.setItem(
-    'r2r_sb_anon_key',
-    window.R2R_SUPABASE_ANON_KEY
-  );
-
-  localStorage.setItem(
-    'r2r_api_base',
-    window.R2R_API_BASE
-  );
-} catch (e) {}
-
-console.log('[R2R CONFIG]', {
-  apiBase: window.R2R_API_BASE,
-  supabaseUrl: window.R2R_SUPABASE_URL,
-  supabaseConfigured: Boolean(
-    window.R2R_SUPABASE_PUBLISHABLE_KEY
-  )
-});
+})(window);
