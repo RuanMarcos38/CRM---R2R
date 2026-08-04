@@ -2716,16 +2716,14 @@ async function conectarWA(){
       marcarWAConectado();
       return;
     }
-
-    const b64=
-      d.qrCode||
-      d.qrcode||
-      d.qr||
-      d.base64||
-      d.data?.base64||
-      d.data?.qrcode||
-      '';
-
+const b64 =
+  d.base64 ||
+  d.data?.base64 ||
+  d.raw?.base64 ||
+  d.raw?.qrcode?.base64 ||
+  d.qrcode?.base64 ||
+  d.qrCode?.base64 ||
+  '';
     if(b64&&canvas){
       canvas.style.display='block';
 
