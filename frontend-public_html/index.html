@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>R2R CRM IA — Marketing Digital</title>
-<script src="config.js?v=20260803-supabase-final"></script>
+<script src="config.js?v=20260804-whatsapp-qr-final"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 <script>
 /* Fallback público: impede configuração vazia/antiga de sobrescrever o Supabase. */
@@ -7624,7 +7624,8 @@ console.log('[R2R CRM] Patch v12 ✅');
 (function () {
   'use strict';
 
-  var timer = null;
+  var pollTimer = null;
+  var lastConnected = false;
 
   function byId(id) {
     return document.getElementById(id);
@@ -7638,48 +7639,29 @@ console.log('[R2R CRM] Patch v12 ✅');
     }
   }
 
-  function setStatus(mode, text) {
-    if (typeof window.setWAStatus === 'function') {
-      window.setWAStatus(mode, text);
-      return;
-    }
-
-    var dot = byId('waStatusDot');
-    var label = byId('waStatusTxt');
-
-    if (dot) {
-      dot.className = 'wa-dot ' + (
-        mode === 'on' ? 'on' :
-        mode === 'ing' ? 'ing' :
-        'off'
-      );
-    }
-
-    if (label) label.textContent = text;
-  }
-
-  function getApi() {
+  function apiFetch(path, options) {
     if (typeof window.r2rInternalFetch === 'function') {
-      return window.r2rInternalFetch;
+      return window.r2rInternalFetch(path, options || {});
     }
 
-    return async function (path, options) {
-      var base = String(
-        window.R2R_API_BASE ||
-        (window.R2R_CONFIG && window.R2R_CONFIG.API_BASE_URL) ||
-        ''
-      ).replace(/\/$/, '');
+    var base = String(
+      window.R2R_API_BASE ||
+      (window.R2R_CONFIG && window.R2R_CONFIG.API_BASE_URL) ||
+      ''
+    ).replace(/\/$/, '');
 
-      var headers = Object.assign(
-        { 'Content-Type': 'application/json' },
+    return fetch(base + path, Object.assign({
+      credentials: 'include',
+      cache: 'no-store'
+    }, options || {}, {
+      headers: Object.assign(
+        {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
         (options && options.headers) || {}
-      );
-
-      var response = await fetch(base + path, Object.assign({}, options || {}, {
-        headers: headers,
-        credentials: 'include'
-      }));
-
+      )
+    })).then(async function (response) {
       var data = await response.json().catch(function () {
         return {};
       });
@@ -7693,24 +7675,148 @@ console.log('[R2R CRM] Patch v12 ✅');
       }
 
       return data;
-    };
+    });
   }
 
   function getInstanceName() {
-    var field =
+    var input =
       byId('waEvoInst') ||
       byId('waEvoInstance') ||
       byId('waEvoInst2');
 
     return String(
-      (field && field.value) ||
+      (input && input.value) ||
       (window.WA_CFG && window.WA_CFG.inst) ||
       localStorage.getItem('r2r_evo_inst') ||
       'Ruan3'
     ).trim() || 'Ruan3';
   }
 
-  function firstQrCodeValue(data) {
+  function connectionState(data) {
+    var source = data && typeof data === 'object' ? data : {};
+
+    var state = String(
+      source.status ||
+      source.state ||
+      source.connectionStatus ||
+      source.instance_status ||
+      (source.data && (
+        source.data.connectionStatus ||
+        source.data.state ||
+        source.data.status
+      )) ||
+      (source.raw && (
+        source.raw.connectionStatus ||
+        source.raw.state ||
+        source.raw.status
+      )) ||
+      ''
+    ).toLowerCase();
+
+    return {
+      connected:
+        source.connected === true ||
+        state === 'open' ||
+        state === 'connected',
+      state: state
+    };
+  }
+
+  function forceStatus(mode, text) {
+    // Chama a função antiga, mas também atualiza diretamente os elementos.
+    if (typeof window.setWAStatus === 'function') {
+      try {
+        window.setWAStatus(mode, text);
+      } catch (error) {
+        console.warn('[R2R WA] setWAStatus antigo falhou:', error);
+      }
+    }
+
+    var dot = byId('waStatusDot');
+    var label = byId('waStatusTxt');
+
+    if (dot) {
+      dot.className = 'wa-dot ' + (
+        mode === 'on'
+          ? 'on'
+          : mode === 'ing'
+            ? 'ing'
+            : 'off'
+      );
+
+      dot.style.background =
+        mode === 'on'
+          ? '#22c55e'
+          : mode === 'ing'
+            ? '#f97316'
+            : '#ef4444';
+    }
+
+    if (label) {
+      label.textContent = text;
+    }
+  }
+
+  function forceConnectedUI(showToastMessage) {
+    lastConnected = true;
+
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+
+    if (window._wa_timer) {
+      clearInterval(window._wa_timer);
+      window._wa_timer = null;
+    }
+
+    forceStatus('on', 'Conectado ✓');
+
+    var connectButton = byId('waBtnOn') || byId('waBtnConnect');
+    var disconnectButton = byId('waBtnOff') || byId('waBtnDisconnect');
+    var loading = byId('waLoading') || byId('waQrLoading');
+    var canvas = byId('waCanvas') || byId('waQrCanvas');
+    var qrBox = byId('waQrBox');
+
+    if (connectButton) connectButton.style.display = 'none';
+    if (disconnectButton) disconnectButton.style.display = '';
+
+    if (loading) loading.style.display = 'none';
+    if (canvas) canvas.style.display = 'none';
+
+    if (qrBox) {
+      qrBox.style.background = '#ffffff';
+      qrBox.style.display = 'flex';
+      qrBox.style.alignItems = 'center';
+      qrBox.style.justifyContent = 'center';
+      qrBox.innerHTML =
+        '<div style="display:flex;flex-direction:column;align-items:center;' +
+        'justify-content:center;gap:10px;min-height:200px;padding:24px;' +
+        'color:#16a34a;text-align:center">' +
+        '<span style="font-size:52px;line-height:1">✓</span>' +
+        '<strong style="font-size:.9rem">WhatsApp conectado</strong>' +
+        '<span style="font-size:.75rem;color:#4b5563">' +
+        'Instância ' + getInstanceName() + ' online</span>' +
+        '</div>';
+    }
+
+    if (showToastMessage && !lastConnected) {
+      toast('WhatsApp conectado!', 'success');
+    }
+  }
+
+  function forceDisconnectedUI(text) {
+    lastConnected = false;
+    forceStatus('off', text || 'Desconectado');
+
+    var connectButton = byId('waBtnOn') || byId('waBtnConnect');
+    var disconnectButton = byId('waBtnOff') || byId('waBtnDisconnect');
+
+    if (connectButton) connectButton.style.display = '';
+    if (disconnectButton) disconnectButton.style.display = 'none';
+  }
+
+  function findQrImage(data) {
     var source = data && typeof data === 'object' ? data : {};
     var inner = source.data && typeof source.data === 'object'
       ? source.data
@@ -7718,67 +7824,360 @@ console.log('[R2R CRM] Patch v12 ✅');
     var raw = source.raw && typeof source.raw === 'object'
       ? source.raw
       : {};
-    var rawData = raw.data && typeof raw.data === 'object'
-      ? raw.data
-      : {};
 
-    var values = [
-      source.code,
-      source.qrText,
-      source.qr_text,
-      inner.code,
-      inner.qrText,
-      inner.qr_text,
-      raw.code,
-      raw.qrText,
-      raw.qr_text,
-      rawData.code,
-      rawData.qrText,
-      rawData.qr_text
+    var candidates = [
+      source.qrCode,
+      source.qrcode,
+      source.qr,
+      source.base64,
+      inner.qrCode,
+      inner.qrcode,
+      inner.qr,
+      inner.base64,
+      raw.qrCode,
+      raw.qrcode,
+      raw.qr,
+      raw.base64
     ];
 
-    for (var i = 0; i < values.length; i += 1) {
-      if (typeof values[i] !== 'string') continue;
+    for (var index = 0; index < candidates.length; index += 1) {
+      if (typeof candidates[index] !== 'string') continue;
 
-      var value = values[i].trim();
+      var value = candidates[index].trim();
 
-      if (
-        value.length >= 40 &&
-        !/^data:image\//i.test(value) &&
-        !/^[0-9\s-]{4,20}$/.test(value)
-      ) {
-        return value;
+      if (/^data:image\//i.test(value)) return value;
+      if (/^iVBORw0KGgo/i.test(value)) {
+        return 'data:image/png;base64,' + value;
       }
     }
 
     return '';
   }
 
-  function firstQrImage(data) {
-    var source = data && typeof data === 'object' ? data : {};
-    var inner = source.data && typeof source.data === 'object'
-      ? source.data
-      : {};
-    var raw = source.raw && typeof source.raw === 'object'
-      ? source.raw
-      : {};
-    var rawData = raw.data && typeof raw.data === 'object'
-      ? raw.data
-      : {};
+  function renderQr(imageSource) {
+    var qrBox = byId('waQrBox');
+    var loading = byId('waLoading') || byId('waQrLoading');
+    var canvas = byId('waCanvas') || byId('waQrCanvas');
+
+    if (!qrBox || !imageSource) return false;
+
+    qrBox.style.background = '#ffffff';
+    qrBox.style.display = 'flex';
+    qrBox.style.alignItems = 'center';
+    qrBox.style.justifyContent = 'center';
+    qrBox.style.overflow = 'visible';
+    qrBox.innerHTML = '';
+
+    var image = document.createElement('img');
+    image.src = imageSource;
+    image.alt = 'QR Code WhatsApp';
+    image.style.display = 'block';
+    image.style.width = '300px';
+    image.style.height = '300px';
+    image.style.maxWidth = '100%';
+    image.style.objectFit = 'contain';
+    image.style.padding = '14px';
+    image.style.background = '#ffffff';
+    image.style.imageRendering = 'pixelated';
+    image.style.filter = 'none';
+
+    qrBox.appendChild(image);
+
+    if (loading) loading.style.display = 'none';
+    if (canvas) canvas.style.display = 'none';
+
+    return true;
+  }
+
+  async function checkStatusFinal(options) {
+    options = options || {};
+
+    try {
+      /*
+       * A rota /connect já foi comprovada como retornando:
+       * connected: true e status: open.
+       * Ela é usada como fallback caso /status retorne somente configuração.
+       */
+      var data;
+
+      try {
+        data = await apiFetch('/api/whatsapp/status', {
+          method: 'GET',
+          cache: 'no-store'
+        });
+      } catch (statusError) {
+        data = null;
+      }
+
+      var state = connectionState(data);
+
+      if (!state.connected && options.allowConnectProbe !== false) {
+        data = await apiFetch('/api/whatsapp/connect', {
+          method: 'POST',
+          body: JSON.stringify({
+            instance: getInstanceName()
+          })
+        });
+
+        state = connectionState(data);
+      }
+
+      if (state.connected) {
+        forceConnectedUI(options.toast === true);
+        return true;
+      }
+
+      if (
+        state.state === 'close' ||
+        state.state === 'closed' ||
+        state.state === 'disconnected'
+      ) {
+        forceDisconnectedUI('Desconectado');
+      } else {
+        forceStatus('ing', 'Configurado, aguardando conexão');
+      }
+
+      return false;
+    } catch (error) {
+      console.warn('[R2R WA] Falha ao verificar status:', error);
+      return false;
+    }
+  }
+
+  async function connectFinal() {
+    forceStatus('ing', 'Conectando...');
+
+    var qrBox = byId('waQrBox');
+
+    if (qrBox) {
+      qrBox.innerHTML =
+        '<div style="display:flex;flex-direction:column;align-items:center;' +
+        'gap:10px;padding:28px">' +
+        '<span class="spinner"></span>' +
+        '<span style="font-size:.82rem;color:var(--gray2)">' +
+        'Verificando a instância...</span></div>';
+    }
+
+    try {
+      var data = await apiFetch('/api/whatsapp/connect', {
+        method: 'POST',
+        body: JSON.stringify({
+          instance: getInstanceName()
+        })
+      });
+
+      var state = connectionState(data);
+
+      if (state.connected) {
+        forceConnectedUI(true);
+        return data;
+      }
+
+      var qrImage = findQrImage(data);
+
+      if (qrImage) {
+        renderQr(qrImage);
+        forceStatus('ing', 'Escaneie o QR Code no WhatsApp');
+
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(function () {
+          checkStatusFinal({
+            allowConnectProbe: true,
+            toast: false
+          });
+        }, 3000);
+
+        window._wa_timer = pollTimer;
+        return data;
+      }
+
+      throw new Error(
+        data.message ||
+        'A Evolution não retornou conexão nem QR Code.'
+      );
+    } catch (error) {
+      forceStatus('off', 'Erro de conexão');
+      toast(String(error.message || error), 'error');
+      throw error;
+    }
+  }
+
+  async function disconnectFinal() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+
+    if (window._wa_timer) {
+      clearInterval(window._wa_timer);
+      window._wa_timer = null;
+    }
+
+    try {
+      await apiFetch('/api/whatsapp/disconnect', {
+        method: 'POST',
+        body: JSON.stringify({
+          instance: getInstanceName()
+        })
+      });
+
+      forceDisconnectedUI('Desconectado');
+
+      var qrBox = byId('waQrBox');
+
+      if (qrBox) {
+        qrBox.innerHTML =
+          '<div id="waLoading" style="display:flex;flex-direction:column;' +
+          'align-items:center;gap:8px;padding:20px">' +
+          '<span class="spinner"></span>' +
+          '<span style="font-size:.8rem;color:var(--gray2)">Aguardando...</span>' +
+          '</div>';
+      }
+
+      toast('WhatsApp desconectado.', 'info');
+    } catch (error) {
+      toast(String(error.message || error), 'error');
+      throw error;
+    }
+  }
+
+  // Sobrescreve todas as funções antigas.
+  window.checkWAStatus = checkStatusFinal;
+  window.conectarWA = connectFinal;
+  window.conectarWhatsApp = connectFinal;
+  window.desconectarWA = disconnectFinal;
+  window.desconectarWhatsApp = disconnectFinal;
+  window.marcarWAConectado = forceConnectedUI;
+
+  /*
+   * Captura os cliques antes dos handlers antigos.
+   * Isso evita que algum onclick antigo volte o status para "aguardando".
+   */
+  document.addEventListener('click', function (event) {
+    var button = event.target && event.target.closest
+      ? event.target.closest('button')
+      : null;
+
+    if (!button) return;
+
+    var buttonId = button.id || '';
+    var action = String(button.getAttribute('onclick') || '');
+
+    if (
+      buttonId === 'waBtnOn' ||
+      buttonId === 'waBtnConnect' ||
+      /conectarWA|conectarWhatsApp/.test(action)
+    ) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      connectFinal();
+      return;
+    }
+
+    if (
+      buttonId === 'waBtnOff' ||
+      buttonId === 'waBtnDisconnect' ||
+      /desconectarWA|desconectarWhatsApp/.test(action)
+    ) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      disconnectFinal();
+      return;
+    }
+
+    if (/checkWAStatus/.test(action)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      checkStatusFinal({
+        allowConnectProbe: true,
+        toast: true
+      });
+    }
+  }, true);
+
+  function startInitialSync() {
+    // Faz a primeira verificação e mantém o painel sincronizado.
+    setTimeout(function () {
+      checkStatusFinal({
+        allowConnectProbe: true,
+        toast: false
+      });
+    }, 1200);
+
+    setInterval(function () {
+      var whatsappPage =
+        byId('wa-panel-evo') ||
+        byId('waQrBox') ||
+        byId('waStatusTxt');
+
+      if (whatsappPage) {
+        checkStatusFinal({
+          allowConnectProbe: true,
+          toast: false
+        });
+      }
+    }, 10000);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startInitialSync);
+  } else {
+    startInitialSync();
+  }
+
+  console.log('[R2R] Correção definitiva de status do WhatsApp carregada.');
+})();
+</script>
+
+
+<script id="r2r-whatsapp-final-image-render-v2">
+(function () {
+  'use strict';
+
+  function el(id) {
+    return document.getElementById(id);
+  }
+
+  function stateOf(data) {
+    data = data && typeof data === 'object' ? data : {};
+
+    var status = String(
+      data.status ||
+      data.state ||
+      data.connectionStatus ||
+      data.instance_status ||
+      (data.data && (
+        data.data.connectionStatus ||
+        data.data.status ||
+        data.data.state
+      )) ||
+      ''
+    ).toLowerCase();
+
+    return {
+      connected:
+        data.connected === true ||
+        status === 'open' ||
+        status === 'connected',
+      status: status
+    };
+  }
+
+  function qrImageFrom(data) {
+    data = data && typeof data === 'object' ? data : {};
+    var nested = data.data && typeof data.data === 'object' ? data.data : {};
+    var raw = data.raw && typeof data.raw === 'object' ? data.raw : {};
 
     var values = [
-      source.qrCode,
-      source.qrcode,
-      source.base64,
-      inner.qrCode,
-      inner.qrcode,
-      inner.base64,
+      data.qrCode,
+      data.qrcode,
+      data.base64,
+      nested.qrCode,
+      nested.qrcode,
+      nested.base64,
       raw.qrCode,
       raw.qrcode,
-      raw.base64,
-      rawData.qrCode,
-      rawData.qrcode,
-      rawData.base64
+      raw.base64
     ];
 
     for (var i = 0; i < values.length; i += 1) {
@@ -7790,314 +8189,249 @@ console.log('[R2R CRM] Patch v12 ✅');
       if (/^iVBORw0KGgo/i.test(value)) {
         return 'data:image/png;base64,' + value;
       }
+      if (/^\/9j\//i.test(value)) {
+        return 'data:image/jpeg;base64,' + value;
+      }
     }
 
     return '';
   }
 
-  function renderQrImage(src) {
-    var qrBox = byId('waQrBox');
-    var canvas = byId('waCanvas') || byId('waQrCanvas');
-    var loading = byId('waLoading') || byId('waQrLoading');
+  function showConnected() {
+    var dot = el('waStatusDot');
+    var text = el('waStatusTxt');
+    var box = el('waQrBox');
+    var connectButton = el('waBtnOn') || el('waBtnConnect');
+    var disconnectButton = el('waBtnOff') || el('waBtnDisconnect');
 
-    if (!qrBox) {
-      throw new Error('Área waQrBox não encontrada no HTML.');
+    if (dot) {
+      dot.className = 'wa-dot on';
+      dot.style.background = '#22c55e';
     }
 
-    qrBox.innerHTML = '';
-
-    var image = document.createElement('img');
-    image.src = src;
-    image.alt = 'QR Code do WhatsApp';
-    image.width = 320;
-    image.height = 320;
-
-    image.style.display = 'block';
-    image.style.width = '320px';
-    image.style.height = '320px';
-    image.style.maxWidth = '100%';
-    image.style.objectFit = 'contain';
-    image.style.background = '#ffffff';
-    image.style.padding = '16px';
-    image.style.margin = '0 auto';
-    image.style.borderRadius = '10px';
-    image.style.imageRendering = 'pixelated';
-    image.style.filter = 'none';
-    image.style.mixBlendMode = 'normal';
-
-    qrBox.style.width = 'auto';
-    qrBox.style.height = 'auto';
-    qrBox.style.minWidth = '220px';
-    qrBox.style.background = '#ffffff';
-    qrBox.style.padding = '0';
-    qrBox.style.overflow = 'visible';
-
-    qrBox.appendChild(image);
-
-    if (canvas) canvas.style.display = 'none';
-    if (loading) loading.style.display = 'none';
-  }
-
-  function generateQrFromRawCode(rawCode) {
-    return new Promise(function (resolve, reject) {
-      if (!window.QRCode || typeof window.QRCode.toDataURL !== 'function') {
-        reject(new Error('Biblioteca QRCode não carregou.'));
-        return;
-      }
-
-      window.QRCode.toDataURL(
-        rawCode,
-        {
-          errorCorrectionLevel: 'M',
-          type: 'image/png',
-          width: 420,
-          margin: 4,
-          color: {
-            dark: '#000000',
-            light: '#FFFFFF'
-          }
-        },
-        function (error, url) {
-          if (error) {
-            reject(error);
-            return;
-          }
-
-          resolve(url);
-        }
-      );
-    });
-  }
-
-  function markConnected() {
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
-    }
-
-    if (window._wa_timer) {
-      clearInterval(window._wa_timer);
-      window._wa_timer = null;
-    }
-
-    setStatus('on', 'Conectado ✓');
-
-    var connectButton = byId('waBtnOn') || byId('waBtnConnect');
-    var disconnectButton = byId('waBtnOff') || byId('waBtnDisconnect');
-
+    if (text) text.textContent = 'Conectado ✓';
     if (connectButton) connectButton.style.display = 'none';
     if (disconnectButton) disconnectButton.style.display = '';
 
-    var qrBox = byId('waQrBox');
-
-    if (qrBox) {
-      qrBox.innerHTML =
-        '<div style="display:flex;flex-direction:column;align-items:center;' +
-        'gap:8px;padding:24px;color:#22c55e">' +
-        '<span style="font-size:48px">✓</span>' +
-        '<strong>WhatsApp conectado!</strong>' +
+    if (box) {
+      box.innerHTML =
+        '<div style="min-height:210px;display:flex;flex-direction:column;' +
+        'align-items:center;justify-content:center;gap:10px;padding:24px;' +
+        'background:#fff;color:#16a34a;text-align:center;width:100%">' +
+        '<span style="font-size:52px;line-height:1">✓</span>' +
+        '<strong>WhatsApp conectado</strong>' +
         '</div>';
     }
-
-    toast('WhatsApp conectado!', 'success');
   }
 
-  async function checkStatusFinal() {
-    try {
-      var api = getApi();
-      var data = await api('/api/whatsapp/status', {
-        method: 'GET',
-        cache: 'no-store'
-      });
+  function showQr(src) {
+    var box = el('waQrBox');
+    var canvas = el('waCanvas') || el('waQrCanvas');
+    var loading = el('waLoading') || el('waQrLoading');
 
-      var status = String(
-        data.status ||
-        data.state ||
-        data.instance_status ||
-        (data.data && (
-          data.data.connectionStatus ||
-          data.data.state
-        )) ||
-        (data.raw && (
-          data.raw.connectionStatus ||
-          data.raw.state
-        )) ||
-        ''
-      ).toLowerCase();
+    if (!box || !src) return false;
 
-      if (
-        data.connected === true ||
-        status === 'open' ||
-        status === 'connected'
-      ) {
-        markConnected();
-        return true;
-      }
+    /*
+     * Usa IMG diretamente. Não desenha no canvas e não aplica filtros.
+     * Mantém a proporção e a margem branca necessárias para leitura.
+     */
+    box.innerHTML = '';
+    box.style.width = '210px';
+    box.style.height = '210px';
+    box.style.maxWidth = '210px';
+    box.style.padding = '14px';
+    box.style.background = '#ffffff';
+    box.style.borderRadius = '10px';
+    box.style.overflow = 'visible';
+    box.style.display = 'flex';
+    box.style.alignItems = 'center';
+    box.style.justifyContent = 'center';
 
-      setStatus('ing', 'Aguardando leitura do QR Code...');
-      return false;
-    } catch (error) {
-      console.warn('[R2R WA status final]', error);
-      return false;
-    }
-  }
+    var img = document.createElement('img');
+    img.src = src;
+    img.alt = 'QR Code do WhatsApp';
+    img.width = 182;
+    img.height = 182;
+    img.style.display = 'block';
+    img.style.width = '182px';
+    img.style.height = '182px';
+    img.style.maxWidth = '100%';
+    img.style.objectFit = 'contain';
+    img.style.background = '#ffffff';
+    img.style.padding = '0';
+    img.style.margin = '0';
+    img.style.boxSizing = 'content-box';
+    img.style.border = '0';
+    img.style.borderRadius = '0';
+    img.style.filter = 'none';
+    img.style.transform = 'none';
+    img.style.imageRendering = 'auto';
 
-  window.checkWAStatus = checkStatusFinal;
-
-  window.conectarWA = window.conectarWhatsApp = async function () {
-    var loading = byId('waLoading') || byId('waQrLoading');
-    var canvas = byId('waCanvas') || byId('waQrCanvas');
-    var qrBox = byId('waQrBox');
-
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
-    }
-
-    if (window._wa_timer) {
-      clearInterval(window._wa_timer);
-      window._wa_timer = null;
-    }
+    box.appendChild(img);
 
     if (canvas) canvas.style.display = 'none';
+    if (loading) loading.style.display = 'none';
 
-    if (qrBox) {
-      qrBox.innerHTML =
-        '<div style="display:flex;flex-direction:column;align-items:center;' +
-        'gap:10px;padding:28px">' +
-        '<span class="spinner"></span>' +
-        '<span style="font-size:.82rem;color:var(--gray2)">' +
-        'Gerando QR Code válido...</span></div>';
+    return true;
+  }
+
+  async function callApi(path, options) {
+    if (typeof window.r2rInternalFetch === 'function') {
+      return window.r2rInternalFetch(path, options || {});
     }
 
-    if (loading) {
-      loading.style.display = 'flex';
-      loading.innerHTML =
-        '<span class="spinner"></span> Gerando QR Code válido...';
-    }
+    var base = String(
+      window.R2R_API_BASE ||
+      (window.R2R_CONFIG && window.R2R_CONFIG.API_BASE_URL) ||
+      ''
+    ).replace(/\/$/, '');
 
-    setStatus('ing', 'Conectando...');
+    var response = await fetch(base + path, Object.assign({
+      credentials: 'include',
+      cache: 'no-store'
+    }, options || {}));
 
-    try {
-      var api = getApi();
-      var data = await api('/api/whatsapp/connect', {
-        method: 'POST',
-        body: JSON.stringify({
-          instance: getInstanceName()
-        })
-      });
+    var data = await response.json().catch(function () {
+      return {};
+    });
 
-      var status = String(
-        data.status ||
-        data.state ||
-        (data.data && data.data.connectionStatus) ||
-        ''
-      ).toLowerCase();
-
-      if (
-        data.connected === true ||
-        status === 'open' ||
-        status === 'connected'
-      ) {
-        markConnected();
-        return;
-      }
-
-      /*
-       * O ponto principal da correção:
-       * usa raw.code retornado pela Evolution e gera um QR novo no navegador.
-       */
-      var rawCode = firstQrCodeValue(data);
-      var qrImage = '';
-
-      if (rawCode) {
-        qrImage = await generateQrFromRawCode(rawCode);
-      } else {
-        qrImage = firstQrImage(data);
-      }
-
-      if (!qrImage) {
-        throw new Error(
-          'O backend não retornou raw.code nem uma imagem de QR Code.'
-        );
-      }
-
-      renderQrImage(qrImage);
-      setStatus('ing', 'Escaneie o novo QR Code no WhatsApp');
-
-      toast(
-        rawCode
-          ? 'QR Code preto e branco gerado pelo código bruto da Evolution.'
-          : 'QR Code recebido do backend.',
-        'success'
+    if (!response.ok || data.ok === false || data.success === false) {
+      throw new Error(
+        data.message ||
+        data.error ||
+        ('Erro HTTP ' + response.status)
       );
+    }
 
-      timer = setInterval(checkStatusFinal, 3000);
-      window._wa_timer = timer;
-    } catch (error) {
-      console.error('[R2R WA conexão final]', error);
+    return data;
+  }
 
-      if (loading) {
-        loading.style.display = 'flex';
-        loading.innerHTML =
-          '<span style="color:#fca5a5;font-size:.8rem">Erro: ' +
-          String(error.message || error) +
-          '</span>';
+  function instanceName() {
+    var input =
+      el('waEvoInst') ||
+      el('waEvoInstance') ||
+      el('waEvoInst2');
+
+    return String(
+      (input && input.value) ||
+      localStorage.getItem('r2r_evo_inst') ||
+      'ruan4'
+    ).trim() || 'ruan4';
+  }
+
+  async function connectFixed() {
+    var data = await callApi('/api/whatsapp/connect', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        instance: instanceName()
+      })
+    });
+
+    var state = stateOf(data);
+
+    if (state.connected) {
+      showConnected();
+      return data;
+    }
+
+    var image = qrImageFrom(data);
+
+    if (image) {
+      showQr(image);
+
+      var text = el('waStatusTxt');
+      var dot = el('waStatusDot');
+
+      if (text) text.textContent = 'Escaneie o QR Code no WhatsApp';
+      if (dot) {
+        dot.className = 'wa-dot ing';
+        dot.style.background = '#f97316';
       }
 
-      setStatus('off', 'Erro de conexão');
-      toast(String(error.message || error), 'error');
-    }
-  };
-
-  window.desconectarWA = window.desconectarWhatsApp = async function () {
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
+      return data;
     }
 
-    if (window._wa_timer) {
-      clearInterval(window._wa_timer);
-      window._wa_timer = null;
-    }
+    throw new Error(
+      data.message ||
+      'A Evolution não retornou um QR Code válido.'
+    );
+  }
+
+  async function statusFixed() {
+    var data;
 
     try {
-      var api = getApi();
+      data = await callApi('/api/whatsapp/status', {
+        method: 'GET'
+      });
+    } catch (_) {
+      data = null;
+    }
 
-      await api('/api/whatsapp/disconnect', {
+    var state = stateOf(data);
+
+    if (!state.connected) {
+      data = await callApi('/api/whatsapp/connect', {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify({
-          instance: getInstanceName()
+          instance: instanceName()
         })
       });
-    } catch (error) {
-      console.error('[R2R WA desconexão final]', error);
-      toast(String(error.message || error), 'error');
-      return;
+
+      state = stateOf(data);
     }
 
-    setStatus('off', 'Desconectado');
-
-    var connectButton = byId('waBtnOn') || byId('waBtnConnect');
-    var disconnectButton = byId('waBtnOff') || byId('waBtnDisconnect');
-    var qrBox = byId('waQrBox');
-
-    if (connectButton) connectButton.style.display = '';
-    if (disconnectButton) disconnectButton.style.display = 'none';
-
-    if (qrBox) {
-      qrBox.innerHTML =
-        '<div id="waLoading" style="display:flex;flex-direction:column;' +
-        'align-items:center;gap:8px;padding:20px">' +
-        '<span class="spinner"></span>' +
-        '<span style="font-size:.8rem;color:var(--gray2)">Aguardando...</span>' +
-        '</div>';
+    if (state.connected) {
+      showConnected();
+      return data;
     }
 
-    toast('WhatsApp desconectado.', 'info');
-  };
+    var image = qrImageFrom(data);
+    if (image) showQr(image);
 
-  console.log('[R2R] Correção final do QR Code carregada.');
+    return data;
+  }
+
+  window.conectarWA = connectFixed;
+  window.conectarWhatsApp = connectFixed;
+  window.checkWAStatus = statusFixed;
+  window.testarEvoAPI = statusFixed;
+
+  document.addEventListener('click', function (event) {
+    var button = event.target && event.target.closest
+      ? event.target.closest('button')
+      : null;
+
+    if (!button) return;
+
+    var action = String(button.getAttribute('onclick') || '');
+
+    if (
+      button.id === 'waBtnOn' ||
+      button.id === 'waBtnConnect' ||
+      /conectarWA|conectarWhatsApp/.test(action)
+    ) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+
+      connectFixed().catch(function (error) {
+        console.error('[R2R WA]', error);
+        if (typeof window.showToast === 'function') {
+          window.showToast(error.message, 'error');
+        }
+      });
+    }
+  }, true);
+
+  console.log('[R2R] Renderização final do QR WhatsApp v2 carregada.');
 })();
 </script>
 
