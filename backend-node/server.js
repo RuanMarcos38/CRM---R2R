@@ -74,7 +74,7 @@ function safeUrlHost(value) {
 async function evolutionHealthProbe() {
   const urls = evolutionEnvUrlCandidates();
   const url = urls[0] || '';
-  const instance = process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm';
+  const instance = process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'PEDROHB';
   const result = {
     configured: !!url,
     host: safeUrlHost(url),
@@ -361,7 +361,7 @@ async function getWhatsappConfig(ctx) {
     instanceKey: forceEnv ? evolutionEnvInstanceKey() || saved.instanceKey || saved.instance_key || saved.instanceApiKey || saved.instance_api_key || saved.instanceToken || saved.instance_token || '' : saved.instanceKey || saved.instance_key || saved.instanceApiKey || saved.instance_api_key || saved.instanceToken || saved.instance_token || (allowGlobal ? evolutionEnvInstanceKey() : ''),
     username: forceEnv ? evolutionEnvUsername() || saved.username || saved.user || saved.login || '' : saved.username || saved.user || saved.login || (allowGlobal ? evolutionEnvUsername() : ''),
     password: forceEnv ? evolutionEnvPassword() || saved.password || saved.pass || saved.senha || '' : saved.password || saved.pass || saved.senha || (allowGlobal ? evolutionEnvPassword() : ''),
-    instance: saved.instance || saved.inst || (allowGlobal ? process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE : '') || 'r2r-crm'
+    instance: saved.instance || saved.inst || (allowGlobal ? process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE : '') || 'PEDROHB'
   });
   return { ...cfg, source: row ? 'database' : 'env', row };
 }
@@ -382,7 +382,7 @@ function getWhatsappEnvFallbackConfigs(ctx, currentConfig = {}) {
       instanceKey: envInstanceKey,
       username: envUser,
       password: envPassword,
-      instance: currentConfig.instance || process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'r2r-crm'
+      instance: currentConfig.instance || process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'PEDROHB'
     }))
     .filter(cfg => cfg.url && (cfg.key || cfg.instanceKey || (cfg.username && cfg.password)))
     .filter(cfg => !(cfg.url === currentConfig.url && cfg.key === currentConfig.key && cfg.instanceKey === currentConfig.instanceKey && cfg.username === currentConfig.username && cfg.password === currentConfig.password && cfg.instance === currentConfig.instance))
@@ -639,7 +639,7 @@ function mergeWhatsappConfig(savedConfig, body) {
     key: inline.key || savedConfig.key || '',
     username: inline.username || savedConfig.username || '',
     password: inline.password || savedConfig.password || '',
-    instance: inline.instance || savedConfig.instance || 'r2r-crm'
+    instance: inline.instance || savedConfig.instance || 'PEDROHB'
   });
 }
 
@@ -771,7 +771,7 @@ async function saveWhatsappConfig(ctx, body) {
   const currentConfig = current && current.config && typeof current.config === 'object' ? current.config : {};
   const url = cleanUrl(body.url || body.evolution_url || currentConfig.url || '');
   const key = String(body.apiKey || body.api_key || body.apikey || body.key || currentConfig.apiKey || currentConfig.api_key || currentConfig.key || '').trim();
-  const instance = String(body.instance || body.inst || currentConfig.instance || currentConfig.inst || 'r2r-crm').trim() || 'r2r-crm';
+  const instance = String(body.instance || body.inst || currentConfig.instance || currentConfig.inst || 'PEDROHB').trim() || 'PEDROHB';
 
   if (!url) {
     const error = new Error('Informe a URL da Evolution API.');
@@ -1539,8 +1539,8 @@ async function handleIntegrations(req, res, url, ctx) {
       config: {
         provider: 'evolution',
         url: cfg.url || '',
-        instance: cfg.instance || cfg.inst || 'r2r-crm',
-        inst: cfg.instance || cfg.inst || 'r2r-crm',
+        instance: cfg.instance || cfg.inst || 'PEDROHB',
+        inst: cfg.instance || cfg.inst || 'PEDROHB',
         has_api_key: !!(cfg.apiKey || cfg.api_key || cfg.key)
       }
     });
@@ -1566,7 +1566,11 @@ async function handleIntegrations(req, res, url, ctx) {
     }
     const savedCfg = await getWhatsappConfig(ctx);
     const cfg = hasInlineWhatsappConfig(body) ? mergeWhatsappConfig(savedCfg, body) : savedCfg;
-    const rawResult = await evolutionRequestWithFallback(ctx, '/instance/connect', 'POST', body, cfg);
+    const connectBody = {
+      ...body,
+      instance: body.instance || cfg.instance || 'PEDROHB'
+    };
+    const rawResult = await evolutionRequestWithFallback(ctx, '/instance/connect', 'POST', connectBody, cfg);
     const result = await normalizeEvolutionQrResult(rawResult);
     await audit(ctx, 'whatsapp_connect', 'integracoes', savedCfg.row && savedCfg.row.id, { status: result.status, instance: cfg.instance });
     return sendJson(req, res, 200, result);
@@ -1583,7 +1587,7 @@ async function handleIntegrations(req, res, url, ctx) {
     await assertFeatureEnabled(store, ctx, 'whatsapp');
     const body = await readBody(req);
     const cfg = await getWhatsappConfig(ctx);
-    const instance = encodeURIComponent(body.instance || cfg.instance || 'r2r-crm');
+    const instance = encodeURIComponent(body.instance || cfg.instance || 'PEDROHB');
     const result = await evolutionRequestWithFallback(ctx, `/instance/logout/${instance}`, 'DELETE', null, cfg);
     await audit(ctx, 'whatsapp_disconnect', 'integracoes', cfg.row && cfg.row.id, { status: result.status, instance: cfg.instance });
     return sendJson(req, res, 200, result);
@@ -1596,7 +1600,7 @@ async function handleIntegrations(req, res, url, ctx) {
     const number = String(body.number || body.telefone || body.phone || '').replace(/\D/g, '');
     if (!number || !text) return sendJson(req, res, 400, { ok: false, success: false, error: 'Informe number/telefone e text/message.' });
     const cfg = await getWhatsappConfig(ctx);
-    const instance = encodeURIComponent(body.instance || cfg.instance || 'r2r-crm');
+    const instance = encodeURIComponent(body.instance || cfg.instance || 'PEDROHB');
     const result = await evolutionRequestWithFallback(ctx, `/message/sendText/${instance}`, 'POST', {
       number,
       textMessage: { text }
