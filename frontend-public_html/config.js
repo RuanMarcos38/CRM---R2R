@@ -6,10 +6,11 @@
   'use strict';
 
   var SUPABASE_URL =
-    'https://uwzfgksmnqgaxtscwxow.supabase.co';
+    SUPABASE_URL
+    'https://iqrnytsgwaiegddfxfjs.supabase.co',
 
   var SUPABASE_PUBLISHABLE_KEY =
-    'sb_publishable_mZUNYHM3JeRZXR8vWfVECA_7gCgTp7i';
+    sb_publishable_NjCg5sXxuj9WmURnKW7ijg_Iwucextg
 
   var API_BASE_URL =
     'https://api.r2rmarketingdigital.com.br';
