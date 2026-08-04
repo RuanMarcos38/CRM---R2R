@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '20260804-direct-crm-final';
+  var VERSION = '20260804-direct-crm-official-evolution-qr';
   if (window.R2R_EVOLUTION_RUNTIME_FIX === VERSION) return;
   window.R2R_EVOLUTION_RUNTIME_FIX = VERSION;
 
@@ -184,16 +184,22 @@
     if (!data) return '';
 
     var candidates = [
+      /*
+       * Prioridade máxima: imagem oficial retornada pela Evolution.
+       * O backend também pode devolver um QR regenerado em qrCode/qrcode,
+       * mas algumas versões do Baileys só funcionam corretamente com o
+       * base64 original da Evolution.
+       */
+      data.raw && data.raw.base64,
+      data.base64,
+      data.data && data.data.base64,
+      data.image,
       data.qrCode,
       data.qrcode,
       data.qr,
-      data.base64,
-      data.image,
       data.data && data.data.qrCode,
       data.data && data.data.qrcode,
-      data.data && data.data.qr,
-      data.data && data.data.base64,
-      data.raw && data.raw.base64
+      data.data && data.data.qr
     ];
 
     for (var i = 0; i < candidates.length; i += 1) {
