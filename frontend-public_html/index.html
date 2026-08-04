@@ -2932,8 +2932,9 @@ async function desconectarWA(){
     canvas.style.display='none';
   }
 
- showToast('WhatsApp desconectado','info');
+  showToast('WhatsApp desconectado','info');
 }
+
 
 // ── IA MULTI-PROVIDER ────────────────────────────────────────────
 const IA_PROVIDERS={
@@ -5824,12 +5825,50 @@ console.log('[R2R v3] Pronto. URL:',SB_URL);
     return {url:String(url).trim().replace(/\/$/,''),apiKey:String(key).trim(),instance:String(instance).trim()||'r2r-crm'};
   }
   function putQr(base64){
-    var qrBox=byId('waQrBox'), canvas=byId('waCanvas')||byId('waQrCanvas'), load=byId('waLoading')||byId('waQrLoading');
-    var imgSrc=base64 && (base64.startsWith('data:')?base64:'data:image/png;base64,'+base64);
-    if(qrBox && imgSrc){qrBox.innerHTML='<img src="'+imgSrc+'" style="width:220px;height:220px;border-radius:10px;display:block" alt="QR Code WhatsApp">';}
-    if(canvas && imgSrc){canvas.style.display='block';var img=new Image();img.onload=function(){canvas.width=img.width||220;canvas.height=img.height||220;canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);};img.src=imgSrc;}
-    if(load) load.style.display='none';
+  const qrBox = byId('waQrBox');
+  const canvas = byId('waCanvas') || byId('waQrCanvas');
+  const load = byId('waLoading') || byId('waQrLoading');
+
+  if(!base64){
+    return;
   }
+
+  const imgSrc = base64.startsWith('data:')
+    ? base64
+    : 'data:image/png;base64,' + base64;
+
+  if(qrBox){
+    qrBox.innerHTML = '';
+
+    const img = document.createElement('img');
+
+    img.src = imgSrc;
+    img.alt = 'QR Code WhatsApp';
+
+    img.style.display = 'block';
+    img.style.width = '260px';
+    img.style.height = 'auto';
+    img.style.maxWidth = '100%';
+    img.style.aspectRatio = '1 / 1';
+    img.style.objectFit = 'contain';
+    img.style.imageRendering = 'pixelated';
+    img.style.background = '#ffffff';
+    img.style.padding = '12px';
+    img.style.borderRadius = '10px';
+    img.style.margin = '0 auto';
+
+    qrBox.appendChild(img);
+  }
+
+  // Não desenhar novamente no canvas, pois isso pode deformar o QR.
+  if(canvas){
+    canvas.style.display = 'none';
+  }
+
+  if(load){
+    load.style.display = 'none';
+  }
+}
 
   window.salvarWAConfig = async function(){
     var cfg=getWAForm();
