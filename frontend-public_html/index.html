@@ -18,7 +18,7 @@ window.R2R_CONFIG = Object.assign(
     API_BASE_URL: 'https://api.r2rmarketingdigital.com.br',
     APP_NAME: 'R2R CRM',
     ENV: 'production',
-    SUPABASE_URL: https://iqrnytsgwaiegddfxfjs.supabase.co
+    SUPABASE_URL: https//iqrnytsgwaiegddfxfjs.supabase.co
     SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_mZUNYHM3JeRZXR8vWfVECA_7gCgTp7i'
   }
 );
@@ -2681,77 +2681,259 @@ async function salvarWAConfig(){
   showToast('Configuração WhatsApp salva!','success');
 }
 async function conectarWA(){
-  if(!WA_CFG.url||!WA_CFG.key){showToast('Configure a Evolution API primeiro','warn');return;}
   setWAStatus('ing','Conectando...');
+
   const load=$id('waLoading')||$id('waQrLoading');
   const canvas=$id('waCanvas')||$id('waQrCanvas');
-  if(load){load.style.display='flex';load.innerHTML='<span class="spinner"></span> Gerando QR...';}
-  if(canvas)canvas.style.display='none';
+
+  if(load){
+    load.style.display='flex';
+    load.innerHTML='<span class="spinner"></span> Gerando QR...';
+  }
+
+  if(canvas){
+    canvas.style.display='none';
+  }
+
   try{
-    await fetch(`${WA_CFG.url}/instance/create`,{method:'POST',headers:{'Content-Type':'application/json','apikey':WA_CFG.key},body:JSON.stringify({instanceName:WA_CFG.inst,qrcode:true})});
-    const r=await fetch(`${WA_CFG.url}/instance/qrcode/${WA_CFG.inst}?image=true`,{headers:{'apikey':WA_CFG.key}});
+    const r=await fetch('/api/whatsapp/connect',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        instance:WA_CFG.inst||'Ruan2'
+      })
+    });
+
     const d=await r.json();
-    const b64=d.base64||d.qrcode||d.data?.qrcode||'';
+
+    if(!r.ok||d.ok===false){
+      throw new Error(d.message||d.error||'Erro ao conectar WhatsApp');
+    }
+
+    if(d.connected===true||d.status==='open'){
+      marcarWAConectado();
+      return;
+    }
+
+    const b64=
+      d.qrCode||
+      d.qrcode||
+      d.qr||
+      d.base64||
+      d.data?.base64||
+      d.data?.qrcode||
+      '';
+
     if(b64&&canvas){
       canvas.style.display='block';
-      if(load)load.style.display='none';
+
+      if(load){
+        load.style.display='none';
+      }
+
       const img=new Image();
-      img.onload=()=>{const ctx=canvas.getContext('2d');canvas.width=img.width||200;canvas.height=img.height||200;ctx.drawImage(img,0,0);};
-      img.src=b64.startsWith('data:')?b64:'data:image/png;base64,'+b64;
+
+      img.onload=()=>{
+        const ctx=canvas.getContext('2d');
+        canvas.width=img.width||300;
+        canvas.height=img.height||300;
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.drawImage(img,0,0,canvas.width,canvas.height);
+      };
+
+      img.src=b64.startsWith('data:')
+        ?b64
+        :'data:image/png;base64,'+b64;
+
       setWAStatus('ing','Aguarde a leitura do QR Code...');
+
+      if(_wa_timer){
+        clearInterval(_wa_timer);
+      }
+
       _wa_timer=setInterval(checkWAStatus,3000);
-    }else{
-      if(load){load.style.display='flex';load.innerHTML='<span style="color:#fca5a5;font-size:.8rem">Erro ao gerar QR. Verifique a Evolution API.</span>';}
-      setWAStatus('off','Erro ao gerar QR');
+      return;
     }
+
+    if(d.status==='pairing_code'){
+      if(load){
+        load.style.display='flex';
+        load.innerHTML=
+          '<span style="font-size:.8rem">Código de pareamento: <strong>'+
+          String(d.pairing_code||'')+
+          '</strong></span>';
+      }
+
+      setWAStatus('ing','Aguardando pareamento...');
+      _wa_timer=setInterval(checkWAStatus,3000);
+      return;
+    }
+
+    throw new Error(d.message||'A Evolution não retornou o QR Code.');
+
   }catch(e){
-    if(load){load.style.display='flex';load.innerHTML=`<span style="color:#fca5a5;font-size:.8rem">Erro: ${e.message}</span>`;}
+    if(load){
+      load.style.display='flex';
+      load.innerHTML=
+        '<span style="color:#fca5a5;font-size:.8rem">Erro: '+
+        String(e.message||e)+
+        '</span>';
+    }
+
     setWAStatus('off','Erro de conexão');
+    showToast(String(e.message||e),'error');
   }
 }
-async function checkWAStatus(){
-  if(!WA_CFG.url)return;
-  try{
-    const r=await fetch(`${WA_CFG.url}/instance/connectionState/${WA_CFG.inst||'r2r-crm'}`,{headers:{'apikey':WA_CFG.key}});
-    const d=await r.json();
-    const estado=d.instance?.state||d.state||'close';
-    if(estado==='open'){
-      clearInterval(_wa_timer);_wa_timer=null;
-      setWAStatus('on','Conectado ✓');
-      const bon=$id('waBtnOn')||$id('waBtnConnect');if(bon)bon.style.display='none';
-      const boff=$id('waBtnOff')||$id('waBtnDisconnect');if(boff)boff.style.display='';
-      const qrbox=$id('waQrBox');
-      if(qrbox)qrbox.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;color:#25d366"><span style="font-size:46px">✓</span><span style="font-weight:700;font-size:.88rem">WhatsApp Conectado!</span></div>';
-      showToast('WhatsApp conectado!','success');
-      if(SB)SB.from('integracoes').upsert({empresa_id:EMP_ID,tipo:'whatsapp',ativa:true,ultimo_sync:new Date().toISOString(),updated_at:new Date().toISOString()},{onConflict:'empresa_id,tipo'}).then(function(){},function(){});
-    }
-  }catch(e){}
-}
-async function desconectarWA(){
-  if(!WA_CFG.url)return;
-  clearInterval(_wa_timer);_wa_timer=null;
-  try{await fetch(`${WA_CFG.url}/instance/logout/${WA_CFG.inst||'r2r-crm'}`,{method:'DELETE',headers:{'apikey':WA_CFG.key}});}catch(e){}
-  setWAStatus('off','Desconectado');
-  const bon=$id('waBtnOn')||$id('waBtnConnect');if(bon)bon.style.display='';
-  const boff=$id('waBtnOff')||$id('waBtnDisconnect');if(boff)boff.style.display='none';
-  const load=$id('waLoading')||$id('waQrLoading');if(load){load.style.display='flex';load.innerHTML='<span class="spinner"></span> Aguardando...';}
-  const canvas=$id('waCanvas')||$id('waQrCanvas');if(canvas)canvas.style.display='none';
-  showToast('WhatsApp desconectado','info');
-}
-function setWAStatus(s,txt){
-  const dot=$id('waStatusDot'),stxt=$id('waStatusTxt');
-  if(dot)dot.className='wa-dot '+(s==='on'?'on':s==='ing'?'ing':'off');
-  if(stxt)stxt.textContent=txt;
-}
-async function enviarWAMsg(numero,texto){
-  if(!WA_CFG.url||!WA_CFG.key||!numero)return;
-  try{await fetch(`${WA_CFG.url}/message/sendText/${WA_CFG.inst||'r2r-crm'}`,{method:'POST',headers:{'Content-Type':'application/json','apikey':WA_CFG.key},body:JSON.stringify({number:numero,textMessage:{text:texto}})});}catch(e){}
-}
-// conectarWhatsApp alias
-function conectarWhatsApp(){conectarWA();}
-function desconectarWhatsApp(){desconectarWA();}
 
-// ── WHATSAPP META CLOUD API ──────────────────────────────────────
+async function checkWAStatus(){
+  try{
+    const r=await fetch('/api/whatsapp/status',{
+      method:'GET',
+      headers:{
+        'Accept':'application/json'
+      }
+    });
+
+    const d=await r.json();
+
+    if(!r.ok||d.ok===false){
+      return;
+    }
+
+    const estado=String(
+      d.status||
+      d.instance_status||
+      d.data?.connectionStatus||
+      d.data?.state||
+      ''
+    ).toLowerCase();
+
+    if(
+      d.connected===true||
+      estado==='open'||
+      estado==='connected'
+    ){
+      marcarWAConectado();
+      return;
+    }
+
+    if(
+      estado==='close'||
+      estado==='closed'||
+      estado==='disconnected'
+    ){
+      setWAStatus('off','Desconectado');
+    }else{
+      setWAStatus('ing','Aguardando conexão...');
+    }
+
+  }catch(e){
+    console.warn('[R2R] Falha ao verificar WhatsApp:',e);
+  }
+}
+
+function marcarWAConectado(){
+  if(_wa_timer){
+    clearInterval(_wa_timer);
+    _wa_timer=null;
+  }
+
+  setWAStatus('on','Conectado ✓');
+
+  const bon=$id('waBtnOn')||$id('waBtnConnect');
+  if(bon){
+    bon.style.display='none';
+  }
+
+  const boff=$id('waBtnOff')||$id('waBtnDisconnect');
+  if(boff){
+    boff.style.display='';
+  }
+
+  const qrbox=$id('waQrBox');
+
+  if(qrbox){
+    qrbox.innerHTML=
+      '<div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;color:#25d366">'+
+      '<span style="font-size:46px">✓</span>'+
+      '<span style="font-weight:700;font-size:.88rem">WhatsApp Conectado!</span>'+
+      '</div>';
+  }
+
+  showToast('WhatsApp conectado!','success');
+
+  if(SB&&EMP_ID){
+    SB.from('integracoes')
+      .upsert({
+        empresa_id:EMP_ID,
+        tipo:'whatsapp',
+        ativa:true,
+        ultimo_sync:new Date().toISOString(),
+        updated_at:new Date().toISOString()
+      },{
+        onConflict:'empresa_id,tipo'
+      })
+      .then(function(){},function(){});
+  }
+}
+
+async function desconectarWA(){
+  if(_wa_timer){
+    clearInterval(_wa_timer);
+    _wa_timer=null;
+  }
+
+  try{
+    const r=await fetch('/api/whatsapp/disconnect',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        instance:WA_CFG.inst||'Ruan2'
+      })
+    });
+
+    const d=await r.json();
+
+    if(!r.ok||d.ok===false){
+      throw new Error(d.message||d.error||'Erro ao desconectar');
+    }
+
+  }catch(e){
+    showToast(String(e.message||e),'error');
+    return;
+  }
+
+  setWAStatus('off','Desconectado');
+
+  const bon=$id('waBtnOn')||$id('waBtnConnect');
+  if(bon){
+    bon.style.display='';
+  }
+
+  const boff=$id('waBtnOff')||$id('waBtnDisconnect');
+  if(boff){
+    boff.style.display='none';
+  }
+
+  const load=$id('waLoading')||$id('waQrLoading');
+
+  if(load){
+    load.style.display='flex';
+    load.innerHTML='<span class="spinner"></span> Aguardando...';
+  }
+
+  const canvas=$id('waCanvas')||$id('waQrCanvas');
+
+  if(canvas){
+    canvas.style.display='none';
+  }
+
+ showToast('WhatsApp desconectado','info');
+}
 
 // ── IA MULTI-PROVIDER ────────────────────────────────────────────
 const IA_PROVIDERS={

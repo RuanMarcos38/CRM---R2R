@@ -218,6 +218,8 @@ create table if not exists public.oportunidades (
   updated_at timestamptz not null default now()
 );
 
+notify pgrst, 'reload schema';
+
 create table if not exists public.atividades (
   id uuid primary key default gen_random_uuid(),
   empresa_id uuid not null references public.empresas(id) on delete cascade,
