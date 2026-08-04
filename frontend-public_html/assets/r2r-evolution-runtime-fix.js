@@ -1,296 +1,504 @@
 (function () {
   'use strict';
 
-  var VERSION = '20260726-n8n-backend-probe';
+  var VERSION = '20260804-direct-crm-final';
   if (window.R2R_EVOLUTION_RUNTIME_FIX === VERSION) return;
   window.R2R_EVOLUTION_RUNTIME_FIX = VERSION;
 
-  var nativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
-
-  function cleanUrl(value) {
-    var url = String(value || '').trim();
-    if (!url) return '';
-    if (!/^https?:\/\//i.test(url) && /^[A-Za-z0-9.-]+(?::\d+)?(\/|$)/.test(url)) {
-      url = /^(localhost|127\.0\.0\.1)(?::|\/|$)/i.test(url) ? 'http://' + url : 'https://' + url;
-    }
-    return url.replace(/\/+$/, '');
-  }
-
-  function apiBase() {
-    var stored = '';
-    try { stored = localStorage.getItem('r2r_api_base') || ''; } catch (e) {}
-    var candidates = [window.R2R_API_BASE, stored, window.location.origin];
-    for (var i = 0; i < candidates.length; i += 1) {
-      var candidate = cleanUrl(candidates[i]);
-      if (!candidate) continue;
-      try {
-        if (window.R2R_ALLOW_API_SUBDOMAIN !== true && new URL(candidate).hostname === 'api.r2rmarketingdigital.com.br') {
-          try { localStorage.removeItem('r2r_api_base'); } catch (e) {}
-          continue;
-        }
-      } catch (e) {}
-      return candidate;
-    }
-    return cleanUrl(window.location.origin);
-  }
-
-  function isBackendOrigin(origin) {
-    origin = cleanUrl(origin);
-    var base = apiBase();
-    return !origin || origin === cleanUrl(window.location.origin) || origin === base;
-  }
-
-  function requestOrigin(input) {
-    try {
-      var url = typeof input === 'string' ? input : input && input.url || '';
-      if (!/^https?:\/\//i.test(url)) return '';
-      return cleanUrl(new URL(url).origin);
-    } catch (e) {
-      return '';
-    }
-  }
-
-  if (nativeFetch) {
-    window.fetch = function guardedFetch(input, opts) {
-      var origin = requestOrigin(input);
-      var url = String(typeof input === 'string' ? input : input && input.url || '');
-      var directEvolution = /\/(instance|message|chat|webhook)\//i.test(url) && !/\/api\//i.test(url);
-      if (directEvolution && !isBackendOrigin(origin) && window.R2R_ALLOW_DIRECT_EVOLUTION !== true) {
-        return Promise.reject(new Error('A Evolution API deve ser chamada somente pelo backend do CRM.'));
-      }
-      return nativeFetch(input, opts || {});
-    };
-  }
+  var pollTimer = null;
+  var pollAttempts = 0;
+  var maxPollAttempts = 120;
+  var lastConnected = false;
+  var busy = false;
 
   function byId(id) {
     return document.getElementById(id);
   }
 
-  function value(ids) {
-    ids = Array.isArray(ids) ? ids : [ids];
-    for (var i = 0; i < ids.length; i += 1) {
-      var el = byId(ids[i]);
-      if (el && typeof el.value !== 'undefined' && String(el.value).trim()) return String(el.value).trim();
+  function cleanUrl(value) {
+    return String(value || '').trim().replace(/\/+$/, '');
+  }
+
+  function apiBase() {
+    var configured = cleanUrl(
+      window.R2R_API_BASE ||
+      (window.R2R_CONFIG && window.R2R_CONFIG.API_BASE_URL) ||
+      ''
+    );
+
+    if (configured) return configured;
+
+    try {
+      var stored = cleanUrl(localStorage.getItem('r2r_api_base') || '');
+      if (stored) return stored;
+    } catch (error) {}
+
+    return cleanUrl(window.location.origin);
+  }
+
+  async function accessToken() {
+    try {
+      if (!window.SB && typeof window.initSupabase === 'function') {
+        await window.initSupabase();
+      }
+
+      if (!window.SB || !window.SB.auth) return '';
+
+      var result = await window.SB.auth.getSession();
+      return (
+        result &&
+        result.data &&
+        result.data.session &&
+        result.data.session.access_token
+      ) || '';
+    } catch (error) {
+      return '';
     }
-    return '';
   }
 
-  function toast(message, type) {
-    if (typeof window.showToast === 'function') window.showToast(message, type || 'info');
-  }
-
-  async function token() {
-    if (!window.SB && typeof window.initSupabase === 'function') await window.initSupabase();
-    if (!window.SB || !window.SB.auth) return '';
-    var session = await window.SB.auth.getSession();
-    return session && session.data && session.data.session && session.data.session.access_token || '';
-  }
-
-  async function apiFetch(path, options) {
+  async function api(path, options) {
     options = options || {};
-    var headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
-    var accessToken = await token();
-    if (accessToken) headers.Authorization = 'Bearer ' + accessToken;
-    var res = await (window.r2rApiFetch || function (p, opts) {
-      return fetch(apiBase() + p, opts);
-    })(path, Object.assign({}, options, { headers: headers }));
-    if (res && typeof res.json !== 'function') return res;
+
+    var headers = Object.assign(
+      {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      options.headers || {}
+    );
+
+    var token = await accessToken();
+    if (token) headers.Authorization = 'Bearer ' + token;
+
+    var response = await fetch(apiBase() + path, Object.assign({}, options, {
+      headers: headers,
+      credentials: 'include',
+      cache: 'no-store'
+    }));
+
+    var raw = '';
+    try {
+      raw = await response.text();
+    } catch (error) {}
+
     var data = {};
-    var text = '';
-    try { text = await res.text(); } catch (e) {}
-    try { data = text ? JSON.parse(text) : {}; } catch (e) {
-      throw new Error('Backend retornou resposta invalida.');
+    if (raw) {
+      try {
+        data = JSON.parse(raw);
+      } catch (error) {
+        throw new Error(
+          'O backend retornou uma resposta inválida. HTTP ' +
+          response.status +
+          ': ' +
+          raw.slice(0, 180)
+        );
+      }
     }
-    if (!res.ok || data.ok === false) throw new Error(data.error || data.message || ('HTTP ' + res.status));
+
+    if (!response.ok || data.ok === false || data.success === false) {
+      throw new Error(
+        data.error ||
+        data.message ||
+        ('Falha na API. HTTP ' + response.status)
+      );
+    }
+
     return data;
   }
 
-  function readConfig() {
+  function instanceName() {
+    var ids = [
+      'waEvoInst',
+      'waEvoInstance',
+      'waEvoInst2',
+      'evolutionInstance'
+    ];
+
+    for (var i = 0; i < ids.length; i += 1) {
+      var field = byId(ids[i]);
+      if (field && String(field.value || '').trim()) {
+        return String(field.value).trim();
+      }
+    }
+
+    return 'ruan';
+  }
+
+  function toast(message, type) {
+    if (typeof window.showToast === 'function') {
+      window.showToast(message, type || 'info');
+    }
+  }
+
+  function setStatus(kind, text) {
+    var statusText = byId('waStatusTxt');
+    if (statusText) statusText.textContent = text;
+
+    var dot =
+      byId('waStatusDot') ||
+      document.querySelector('.wa-status-dot');
+
+    if (dot) {
+      dot.style.background =
+        kind === 'on' ? '#22c55e' :
+        kind === 'off' ? '#ef4444' :
+        '#f97316';
+    }
+  }
+
+  function qrBox() {
+    return (
+      byId('waQrBox') ||
+      byId('waCanvas') && byId('waCanvas').parentNode ||
+      byId('waQrCanvas') && byId('waQrCanvas').parentNode ||
+      byId('waLoading') && byId('waLoading').parentNode
+    );
+  }
+
+  function normalizeStatus(data) {
+    data = data || {};
+
+    var nested = data.data || {};
+    var status = String(
+      data.status ||
+      data.connectionStatus ||
+      nested.status ||
+      nested.connectionStatus ||
+      nested.state ||
+      ''
+    ).toLowerCase();
+
+    var connected =
+      data.connected === true ||
+      nested.connected === true ||
+      status === 'open' ||
+      status === 'connected';
+
     return {
-      url: cleanUrl(value(['waEvoUrl', 'waEvoUrl2', 'evolutionUrl', 'evolutionApiUrl'])),
-      apiKey: value(['waEvoKey', 'waEvoKey2', 'evolutionApiKey']),
-      instance: value(['waEvoInst', 'waEvoInstance', 'waEvoInst2', 'evolutionInstance']) || 'r2r-crm'
+      connected: connected,
+      status: status
     };
   }
 
-  function setFields(config) {
-    config = config || {};
-    ['waEvoUrl', 'waEvoUrl2', 'evolutionUrl', 'evolutionApiUrl'].forEach(function (id) {
-      var el = byId(id);
-      if (el && config.url) el.value = config.url;
-    });
-    ['waEvoInst', 'waEvoInstance', 'waEvoInst2', 'evolutionInstance'].forEach(function (id) {
-      var el = byId(id);
-      if (el) el.value = config.instance || config.inst || 'r2r-crm';
-    });
-    ['waEvoKey', 'waEvoKey2', 'evolutionApiKey'].forEach(function (id) {
-      var el = byId(id);
-      if (el) {
-        el.value = '';
-        el.placeholder = config.has_api_key ? 'API Key salva no backend - preencha apenas para trocar' : 'API Key Global da Evolution';
+  function qrImage(data) {
+    if (!data) return '';
+
+    var candidates = [
+      data.qrCode,
+      data.qrcode,
+      data.qr,
+      data.base64,
+      data.image,
+      data.data && data.data.qrCode,
+      data.data && data.data.qrcode,
+      data.data && data.data.qr,
+      data.data && data.data.base64,
+      data.raw && data.raw.base64
+    ];
+
+    for (var i = 0; i < candidates.length; i += 1) {
+      var value = String(candidates[i] || '').trim();
+      if (!value) continue;
+
+      if (value.indexOf('data:image/') === 0) return value;
+
+      if (/^[A-Za-z0-9+/=\s]+$/.test(value) && value.length > 500) {
+        return 'data:image/png;base64,' + value.replace(/\s+/g, '');
       }
-    });
-    window.WA_CFG = { url: config.url || '', inst: config.instance || config.inst || 'r2r-crm', key: '' };
-  }
-
-  function qrTargets() {
-    var canvas = byId('waCanvas') || byId('waQrCanvas');
-    var loading = byId('waLoading') || byId('waQrLoading');
-    var box = byId('waQrBox') || canvas && canvas.parentNode || loading && loading.parentNode;
-    return { canvas: canvas, loading: loading, box: box };
-  }
-
-  function setQrMessage(message, color) {
-    var targets = qrTargets();
-    if (targets.canvas) targets.canvas.style.display = 'none';
-    var html = '<span style="display:block;text-align:center;line-height:1.45;color:' + (color || '#334155') + ';padding:8px">' + String(message || '').replace(/[&<>"']/g, function (c) {
-      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
-    }) + '</span>';
-    if (targets.loading) {
-      targets.loading.style.display = 'flex';
-      targets.loading.innerHTML = html;
-    } else if (targets.box) {
-      targets.box.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:180px;text-align:center">' + html + '</div>';
     }
+
+    return '';
   }
 
-  function busy() {
-    setQrMessage('Gerando QR Code...', '#334155');
-  }
+  function renderQr(src) {
+    var box = qrBox();
+    if (!box || !src) return false;
 
-  function qrValue(payload) {
-    if (!payload) return '';
-    if (typeof payload === 'string') return payload;
-    return qrValue(payload.qr || payload.qrcode || payload.base64 || payload.code || payload.data);
-  }
+    lastConnected = false;
 
-  function renderQr(payload) {
-    var qr = String(qrValue(payload) || '').trim();
-    if (!qr) return false;
-    var src = qr.indexOf('data:') === 0 ? qr : 'data:image/png;base64,' + qr;
-    var targets = qrTargets();
-    var image = new Image();
-    image.onload = function () {
-      if (targets.canvas && targets.canvas.getContext) {
-        targets.canvas.width = 260;
-        targets.canvas.height = 260;
-        targets.canvas.style.width = '260px';
-        targets.canvas.style.height = '260px';
-        targets.canvas.style.background = '#fff';
-        var ctx = targets.canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = false;
-        ctx.clearRect(0, 0, 260, 260);
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(0, 0, 260, 260);
-        ctx.drawImage(image, 0, 0, 260, 260);
-        targets.canvas.style.display = 'block';
-        if (targets.loading) targets.loading.style.display = 'none';
-      } else if (targets.loading) {
-        targets.loading.innerHTML = '<img src="' + src + '" alt="QR Code WhatsApp" style="width:260px;height:260px;background:#fff;image-rendering:pixelated">';
-      }
+    box.innerHTML = '';
+    box.style.width = '230px';
+    box.style.height = '230px';
+    box.style.maxWidth = '230px';
+    box.style.padding = '14px';
+    box.style.background = '#ffffff';
+    box.style.borderRadius = '10px';
+    box.style.overflow = 'hidden';
+    box.style.display = 'flex';
+    box.style.alignItems = 'center';
+    box.style.justifyContent = 'center';
+
+    var img = document.createElement('img');
+    img.src = src;
+    img.alt = 'QR Code para conectar o WhatsApp';
+    img.width = 202;
+    img.height = 202;
+    img.draggable = false;
+    img.style.width = '202px';
+    img.style.height = '202px';
+    img.style.objectFit = 'contain';
+    img.style.display = 'block';
+    img.style.background = '#ffffff';
+    img.style.imageRendering = 'pixelated';
+
+    img.onerror = function () {
+      setMessage(
+        'O QR Code foi recebido, mas a imagem não pôde ser exibida.',
+        '#b91c1c'
+      );
     };
-    image.onerror = function () {
-      setQrMessage('A Evolution retornou QR, mas a imagem nao pode ser renderizada.', '#b91c1c');
-    };
-    image.src = src;
+
+    box.appendChild(img);
+    setStatus('ing', 'Escaneie o QR Code no WhatsApp');
     return true;
   }
 
-  async function saveConfig(requireKey) {
-    var cfg = readConfig();
-    if (!cfg.url) {
-      setQrMessage('Preencha a URL da Evolution API.', '#b91c1c');
-      toast('Preencha a URL da Evolution API.', 'warn');
-      return false;
+  function setMessage(message, color) {
+    var box = qrBox();
+    if (!box) return;
+
+    box.innerHTML =
+      '<div style="' +
+      'width:100%;height:100%;min-height:190px;' +
+      'display:flex;align-items:center;justify-content:center;' +
+      'text-align:center;padding:18px;background:#fff;' +
+      'color:' + (color || '#334155') + ';line-height:1.45">' +
+      String(message || '').replace(/[&<>"']/g, function (char) {
+        return {
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;'
+        }[char];
+      }) +
+      '</div>';
+  }
+
+  function connectedUi(showToastMessage) {
+    lastConnected = true;
+    stopPolling();
+    setStatus('on', 'Conectado ✓');
+
+    var box = qrBox();
+    if (box) {
+      box.innerHTML =
+        '<div data-r2r-wa-connected="true" style="' +
+        'width:100%;height:100%;min-height:200px;' +
+        'display:flex;flex-direction:column;align-items:center;' +
+        'justify-content:center;gap:10px;background:#fff;' +
+        'color:#16a34a;text-align:center;padding:20px">' +
+        '<span style="font-size:52px;line-height:1">✓</span>' +
+        '<strong>WhatsApp conectado</strong>' +
+        '<small style="color:#64748b">Instância: ' +
+        instanceName().replace(/[<>&"]/g, '') +
+        '</small>' +
+        '</div>';
     }
-    if (requireKey && !cfg.apiKey) {
-      setQrMessage('Preencha a API Key Global da Evolution API.', '#b91c1c');
-      toast('Preencha a API Key Global da Evolution API.', 'warn');
-      return false;
+
+    var connectButton = byId('waBtnOn') || byId('waBtnConnect');
+    var disconnectButton = byId('waBtnOff') || byId('waBtnDisconnect');
+
+    if (connectButton) connectButton.style.display = 'none';
+    if (disconnectButton) disconnectButton.style.display = '';
+
+    if (showToastMessage) {
+      toast('WhatsApp conectado com sucesso.', 'success');
     }
-    var payload = { url: cfg.url, instance: cfg.instance };
-    if (cfg.apiKey) payload.apiKey = cfg.apiKey;
-    var data = await apiFetch('/api/integrations/evolution', { method: 'POST', body: JSON.stringify(payload) });
-    if (data.config) setFields(data.config);
-    return true;
+  }
+
+  function disconnectedUi(message) {
+    lastConnected = false;
+    setStatus('off', message || 'Desconectado');
+
+    var connectButton = byId('waBtnOn') || byId('waBtnConnect');
+    var disconnectButton = byId('waBtnOff') || byId('waBtnDisconnect');
+
+    if (connectButton) connectButton.style.display = '';
+    if (disconnectButton) disconnectButton.style.display = 'none';
+  }
+
+  async function checkStatus(showToastMessage) {
+    var data = await api('/api/whatsapp/status', {
+      method: 'GET'
+    });
+
+    var state = normalizeStatus(data);
+
+    if (state.connected) {
+      connectedUi(showToastMessage === true);
+      return data;
+    }
+
+    lastConnected = false;
+
+    var image = qrImage(data);
+    if (image) renderQr(image);
+
+    if (
+      state.status === 'close' ||
+      state.status === 'closed' ||
+      state.status === 'disconnected'
+    ) {
+      disconnectedUi('Desconectado');
+    } else if (!image) {
+      setStatus('ing', 'Configurado, aguardando conexão');
+    }
+
+    return data;
+  }
+
+  async function connect() {
+    if (busy) return;
+    busy = true;
+
+    try {
+      stopPolling();
+      lastConnected = false;
+      setStatus('ing', 'Gerando QR Code...');
+      setMessage('Gerando um novo QR Code...', '#334155');
+
+      /*
+       * O CRM chama somente o próprio backend.
+       * URL e API Key da Evolution permanecem protegidas no EasyPanel.
+       */
+      var data = await api('/api/whatsapp/connect', {
+        method: 'POST',
+        body: JSON.stringify({
+          instance: instanceName(),
+          forceNewQr: true
+        })
+      });
+
+      var state = normalizeStatus(data);
+
+      if (state.connected) {
+        connectedUi(true);
+        return data;
+      }
+
+      var image = qrImage(data);
+
+      if (image) {
+        renderQr(image);
+        toast('QR Code novo gerado. Escaneie pelo WhatsApp.', 'success');
+      } else {
+        await checkStatus(false);
+      }
+
+      startPolling();
+      return data;
+    } catch (error) {
+      disconnectedUi('Erro ao gerar QR Code');
+      setMessage(
+        'Erro ao conectar diretamente pelo CRM: ' + error.message,
+        '#b91c1c'
+      );
+      toast('Erro ao conectar WhatsApp: ' + error.message, 'error');
+      throw error;
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function disconnect() {
+    if (busy) return;
+    busy = true;
+
+    try {
+      stopPolling();
+
+      await api('/api/whatsapp/disconnect', {
+        method: 'POST',
+        body: JSON.stringify({
+          instance: instanceName()
+        })
+      });
+
+      disconnectedUi('Desconectado');
+      setMessage(
+        'WhatsApp desconectado. Clique em Conectar para gerar um novo QR Code.',
+        '#334155'
+      );
+      toast('WhatsApp desconectado.', 'info');
+    } catch (error) {
+      toast('Erro ao desconectar: ' + error.message, 'error');
+      throw error;
+    } finally {
+      busy = false;
+    }
+  }
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+
+    pollAttempts = 0;
+    window._wa_direct_crm_timer = null;
+  }
+
+  function startPolling() {
+    stopPolling();
+
+    pollTimer = setInterval(function () {
+      pollAttempts += 1;
+
+      checkStatus(false).catch(function (error) {
+        console.warn('[R2R WhatsApp polling]', error);
+      });
+
+      if (pollAttempts >= maxPollAttempts) {
+        stopPolling();
+
+        if (!lastConnected) {
+          setStatus('ing', 'QR Code expirou. Clique em Conectar novamente');
+        }
+      }
+    }, 3000);
+
+    window._wa_direct_crm_timer = pollTimer;
   }
 
   window.carregarWACfg = async function () {
     try {
-      var data = await apiFetch('/api/integrations/evolution', { method: 'GET' });
-      setFields(data.config || {});
-      if (!data.configured) setQrMessage('Preencha URL, API Key e instancia da Evolution para gerar o QR Code.', '#334155');
-      return data;
+      return await checkStatus(false);
     } catch (error) {
-      setQrMessage('Erro ao carregar configuracao: ' + error.message, '#b91c1c');
+      console.warn('[R2R WhatsApp inicialização]', error);
       return null;
     }
   };
 
-  window.testarEvoAPI = async function () {
-    try {
-      var data = await apiFetch('/api/integrations/evolution/status', { method: 'GET' });
-      if (data.connected) {
-        setQrMessage('WhatsApp ja esta conectado. Para gerar um novo QR Code, clique em Desconectar e depois em Conectar.', '#166534');
-      }
-      toast(data.connected ? 'WhatsApp conectado.' : (data.message || 'Status WhatsApp atualizado.'), data.connected ? 'success' : 'info');
-      return data;
-    } catch (error) {
-      toast('Erro WhatsApp: ' + error.message, 'error');
-      setQrMessage('Erro ao verificar WhatsApp: ' + error.message, '#b91c1c');
-      return null;
-    }
+  window.checkWAStatus = function () {
+    return checkStatus(true);
   };
 
-  window.conectarWA = window.conectarWhatsApp = async function () {
-    try {
-      busy();
-      if (!await saveConfig(true)) return;
-      var cfg = readConfig();
-      var data = await apiFetch('/api/integrations/evolution/connect', {
-        method: 'POST',
-        body: JSON.stringify({ instance: cfg.instance })
-      });
-      if (renderQr(data)) return toast('QR Code gerado pelo backend.', 'success');
-      if (data.connected || data.status === 'open') {
-        setQrMessage(data.message || 'WhatsApp ja esta conectado. Para gerar outro QR Code, desconecte a instancia primeiro.', '#166534');
-        return toast('WhatsApp ja esta conectado.', 'success');
-      }
-      if (data.pairing_code) {
-        setQrMessage('Codigo de pareamento: ' + data.pairing_code, '#334155');
-        return toast('A Evolution retornou codigo de pareamento.', 'info');
-      }
-      setQrMessage(data.message || 'A Evolution respondeu, mas nao retornou QR Code.', data.ok === false ? '#b91c1c' : '#334155');
-      toast(data.message || 'Solicitacao enviada para Evolution API.', 'info');
-    } catch (error) {
-      setQrMessage('Erro ao conectar WhatsApp: ' + error.message, '#b91c1c');
-      toast('Erro ao conectar WhatsApp: ' + error.message, 'error');
-    }
+  window.testarEvoAPI = function () {
+    return checkStatus(true);
   };
 
-  window.desconectarWA = async function () {
-    try {
-      await apiFetch('/api/integrations/evolution/disconnect', { method: 'POST', body: JSON.stringify({}) });
-      setQrMessage('WhatsApp desconectado. Clique em Conectar para gerar um novo QR Code.', '#334155');
-      toast('Comando de desconexao enviado.', 'success');
-    } catch (error) {
-      toast('Erro ao desconectar: ' + error.message, 'error');
-    }
-  };
+  window.conectarWA = connect;
+  window.conectarWhatsApp = connect;
+  window.desconectarWA = disconnect;
+  window.desconectarWhatsApp = disconnect;
+  window.marcarWAConectado = connectedUi;
 
-  window.enviarWAMsg = async function (number, text, extra) {
-    number = String(number || '').replace(/\D/g, '');
-    text = String(text || '').trim();
-    if (!number || !text) return null;
-    return apiFetch('/api/messages/send', {
-      method: 'POST',
-      body: JSON.stringify(Object.assign({ number: number, text: text }, extra || {}))
-    });
-  };
-
-  document.addEventListener('DOMContentLoaded', function () {
+  function initialCheck() {
     setTimeout(function () {
-      if (typeof window.carregarWACfg === 'function') window.carregarWACfg();
-    }, 1000);
-  });
+      checkStatus(false).catch(function () {});
+    }, 800);
+
+    setTimeout(function () {
+      checkStatus(false).catch(function () {});
+    }, 2200);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initialCheck);
+  } else {
+    initialCheck();
+  }
+
+  console.log('[R2R] WhatsApp direto pelo CRM carregado:', VERSION);
 })();
