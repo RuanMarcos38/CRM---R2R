@@ -10,6 +10,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
+const QRCode = require('qrcode');
 
 const { loadEnv, boolEnv, listEnv, numberEnv } = require('./src/env');
 loadEnv();
@@ -432,6 +433,199 @@ async function evolutionRequestWithFallback(ctx, pathname, method = 'GET', body,
     error: 'Evolution API recusou a API Key salva e tambem a EVOLUTION_API_KEY do EasyPanel.',
     message: 'Evolution API recusou autenticacao. Atualize a API Key Global da Evolution no EasyPanel/CRM e tente novamente.'
   };
+}
+
+
+function firstEvolutionQrText(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+
+    const text = String(value).trim();
+
+    if (!text) continue;
+    if (/^data:image\//i.test(text)) continue;
+    if (/^[0-9\s-]{4,20}$/.test(text)) continue;
+
+    // O codigo bruto do QR do WhatsApp e uma string longa.
+    if (text.length >= 40) return text;
+  }
+
+  return '';
+}
+
+function evolutionQrContainers(result) {
+  const source = result && typeof result === 'object' ? result : {};
+  const data = source.data && typeof source.data === 'object' ? source.data : {};
+  const raw = source.raw && typeof source.raw === 'object' ? source.raw : {};
+  const rawData = raw.data && typeof raw.data === 'object' ? raw.data : {};
+  const instance = source.instance && typeof source.instance === 'object' ? source.instance : {};
+  const instanceData = data.instance && typeof data.instance === 'object' ? data.instance : {};
+
+  return { source, data, raw, rawData, instance, instanceData };
+}
+
+function extractEvolutionQrText(result) {
+  const { source, data, raw, rawData, instance, instanceData } =
+    evolutionQrContainers(result);
+
+  return firstEvolutionQrText(
+    source.code,
+    source.qr,
+    source.qrText,
+    source.qr_text,
+    source.qrcode && !String(source.qrcode).startsWith('data:') ? source.qrcode : '',
+    source.qrCode && !String(source.qrCode).startsWith('data:') ? source.qrCode : '',
+
+    data.code,
+    data.qr,
+    data.qrText,
+    data.qr_text,
+    data.qrcode && !String(data.qrcode).startsWith('data:') ? data.qrcode : '',
+    data.qrCode && !String(data.qrCode).startsWith('data:') ? data.qrCode : '',
+
+    raw.code,
+    raw.qr,
+    raw.qrText,
+    raw.qr_text,
+    raw.qrcode && !String(raw.qrcode).startsWith('data:') ? raw.qrcode : '',
+    raw.qrCode && !String(raw.qrCode).startsWith('data:') ? raw.qrCode : '',
+
+    rawData.code,
+    rawData.qr,
+    rawData.qrText,
+    rawData.qr_text,
+
+    instance.code,
+    instance.qr,
+    instance.qrText,
+    instanceData.code,
+    instanceData.qr,
+    instanceData.qrText
+  );
+}
+
+function extractEvolutionQrImage(result) {
+  const { source, data, raw, rawData, instance, instanceData } =
+    evolutionQrContainers(result);
+
+  const candidates = [
+    source.base64,
+    source.qrCode,
+    source.qrcode,
+    data.base64,
+    data.qrCode,
+    data.qrcode,
+    raw.base64,
+    raw.qrCode,
+    raw.qrcode,
+    rawData.base64,
+    rawData.qrCode,
+    rawData.qrcode,
+    instance.base64,
+    instance.qrCode,
+    instance.qrcode,
+    instanceData.base64,
+    instanceData.qrCode,
+    instanceData.qrcode
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+
+    const image = candidate.trim();
+
+    if (/^data:image\/(?:png|jpeg|jpg|webp);base64,/i.test(image)) {
+      return image;
+    }
+
+    // Algumas versoes retornam apenas o Base64 do PNG, sem o prefixo data:.
+    if (/^iVBORw0KGgo/i.test(image)) {
+      return `data:image/png;base64,${image}`;
+    }
+  }
+
+  return '';
+}
+
+async function normalizeEvolutionQrResult(result) {
+  const source = result && typeof result === 'object' ? result : {};
+
+  const status = String(
+    source.status ||
+    source.connectionStatus ||
+    source.instance_status ||
+    source.data?.connectionStatus ||
+    source.data?.state ||
+    source.raw?.connectionStatus ||
+    source.raw?.state ||
+    ''
+  ).toLowerCase();
+
+  if (
+    source.connected === true ||
+    status === 'open' ||
+    status === 'connected'
+  ) {
+    return {
+      ...source,
+      ok: true,
+      success: true,
+      connected: true,
+      status: 'open'
+    };
+  }
+
+  /*
+   * Prioridade: usar o codigo bruto retornado pela Evolution/Baileys.
+   * Assim o backend gera um QR novo, preto e branco, sem filtros ou deformacao.
+   */
+  const qrText = extractEvolutionQrText(source);
+
+  if (qrText) {
+    const qrImage = await QRCode.toDataURL(qrText, {
+      type: 'image/png',
+      errorCorrectionLevel: 'M',
+      width: 420,
+      margin: 4,
+      color: {
+        dark: '#000000',
+        light: '#FFFFFF'
+      }
+    });
+
+    return {
+      ...source,
+      ok: true,
+      success: true,
+      connected: false,
+      status: 'qrcode',
+      base64: qrImage,
+      qrCode: qrImage,
+      qrcode: qrImage,
+      qr_source: 'backend_generated_from_evolution_code'
+    };
+  }
+
+  /*
+   * Fallback: se a Evolution nao enviou o codigo bruto, preserva a imagem.
+   */
+  const existingImage = extractEvolutionQrImage(source);
+
+  if (existingImage) {
+    return {
+      ...source,
+      ok: source.ok !== false,
+      success: source.success !== false,
+      connected: false,
+      status: source.status || 'qrcode',
+      base64: existingImage,
+      qrCode: existingImage,
+      qrcode: existingImage,
+      qr_source: source.qr_source || 'evolution_image'
+    };
+  }
+
+  return source;
 }
 
 function hasInlineWhatsappConfig(body) {
@@ -1372,14 +1566,16 @@ async function handleIntegrations(req, res, url, ctx) {
     }
     const savedCfg = await getWhatsappConfig(ctx);
     const cfg = hasInlineWhatsappConfig(body) ? mergeWhatsappConfig(savedCfg, body) : savedCfg;
-    const result = await evolutionRequestWithFallback(ctx, '/instance/connect', 'POST', body, cfg);
+    const rawResult = await evolutionRequestWithFallback(ctx, '/instance/connect', 'POST', body, cfg);
+    const result = await normalizeEvolutionQrResult(rawResult);
     await audit(ctx, 'whatsapp_connect', 'integracoes', savedCfg.row && savedCfg.row.id, { status: result.status, instance: cfg.instance });
     return sendJson(req, res, 200, result);
   }
 
   if (url.pathname === '/api/integrations/evolution/qrcode' && req.method === 'GET') {
     await assertFeatureEnabled(store, ctx, 'whatsapp');
-    const result = await evolutionRequestWithFallback(ctx, '/instance/connect', 'POST', {});
+    const rawResult = await evolutionRequestWithFallback(ctx, '/instance/connect', 'POST', {});
+    const result = await normalizeEvolutionQrResult(rawResult);
     return sendJson(req, res, 200, result);
   }
 
@@ -1728,4 +1924,4 @@ if (require.main === module) {
   for (const port of extraPorts()) listen(port, false);
 }
 
-module.exports = { createServer, publicConfig, injectRuntimeConfig, VERSION };
+module.exports = { createServer, publicConfig, injectRuntimeConfig, VERSI
