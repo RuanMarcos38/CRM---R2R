@@ -1924,4 +1924,4 @@ if (require.main === module) {
   for (const port of extraPorts()) listen(port, false);
 }
 
-module.exports = { createServer, publicConfig, injectRuntimeConfig, VERSI
+module.exports = { createServer, publicConfig, injectRuntimeConfig, VERSION };
