@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '20260804-direct-crm-pedrohb-final';
+  var VERSION = '20260804-pedrohb-hard-force-final';
   if (window.R2R_EVOLUTION_RUNTIME_FIX === VERSION) return;
   window.R2R_EVOLUTION_RUNTIME_FIX = VERSION;
 
@@ -107,6 +107,15 @@
   }
 
   function instanceName() {
+    /*
+     * Instância fixa e oficial deste CRM.
+     * Ignora valores antigos como ruan, ruan4, Ruan2 ou r2r-crm
+     * que possam ter ficado salvos em inputs/localStorage.
+     */
+    return 'pedrohb';
+  }
+
+  function syncInstanceFields() {
     var ids = [
       'waEvoInst',
       'waEvoInstance',
@@ -116,14 +125,14 @@
 
     for (var i = 0; i < ids.length; i += 1) {
       var field = byId(ids[i]);
-      if (field && String(field.value || '').trim()) {
-        return String(field.value).trim();
-      }
+      if (field) field.value = 'pedrohb';
     }
 
-    return 'pedrohb';
+    try {
+      localStorage.setItem('r2r_evo_inst', 'pedrohb');
+      localStorage.setItem('r2r_evo_instance', 'pedrohb');
+    } catch (error) {}
   }
-
   function toast(message, type) {
     if (typeof window.showToast === 'function') {
       window.showToast(message, type || 'info');
@@ -325,7 +334,7 @@
   }
 
   async function checkStatus(showToastMessage) {
-    var data = await api('/api/whatsapp/status', {
+    var data = await api('/api/whatsapp/status?instance=pedrohb', {
       method: 'GET'
     });
 
@@ -371,7 +380,7 @@
       var data = await api('/api/whatsapp/connect', {
         method: 'POST',
         body: JSON.stringify({
-          instance: instanceName(),
+          instance: 'pedrohb',
           forceNewQr: true
         })
       });
@@ -417,7 +426,7 @@
       await api('/api/whatsapp/disconnect', {
         method: 'POST',
         body: JSON.stringify({
-          instance: instanceName()
+          instance: 'pedrohb'
         })
       });
 
@@ -491,6 +500,8 @@
   window.marcarWAConectado = connectedUi;
 
   function initialCheck() {
+    syncInstanceFields();
+
     setTimeout(function () {
       checkStatus(false).catch(function () {});
     }, 800);
