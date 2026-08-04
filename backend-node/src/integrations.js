@@ -171,20 +171,57 @@ function extractPairingCode(value, seen = new Set()) {
 }
 
 function extractQrCodeText(value, seen = new Set()) {
-  if (!value || typeof value !== 'object' || seen.has(value)) return null;
+  if (!value || seen.has(value)) return null;
+
+  if (typeof value === 'string') {
+    const text = value.trim();
+
+    if (!text) return null;
+    if (/^data:image\//i.test(text)) return null;
+    if (/^(iVBOR|\/9j\/|R0lGOD|PHN2Z)/.test(text)) return null;
+    if (/^[0-9\s-]{4,20}$/.test(text)) return null;
+
+    return text.length > 32 ? text : null;
+  }
+
+  if (typeof value !== 'object') return null;
   seen.add(value);
+
+  const priorityKeys = [
+    'code',
+    'qrText',
+    'qr_text',
+    'qrCodeText',
+    'qrcodeText',
+    'qrcode_text',
+    'qr'
+  ];
+
+  for (const key of priorityKeys) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+
+    const found = extractQrCodeText(value[key], seen);
+    if (found) return found;
+  }
 
   for (const [key, item] of Object.entries(value)) {
     const normalized = key.toLowerCase().replace(/[_-]/g, '');
-    if (normalized === 'code' && typeof item === 'string') {
-      const text = item.trim();
-      if (text.length > 32 && !/^(iVBOR|\/9j\/|R0lGOD|PHN2Z)/.test(text)) return text;
+
+    if (
+      ['base64', 'image', 'qrcode', 'qrcodebase64', 'qrcodeimage'].includes(normalized) &&
+      typeof item === 'string' &&
+      (
+        /^data:image\//i.test(item.trim()) ||
+        /^(iVBOR|\/9j\/|R0lGOD|PHN2Z)/.test(item.trim())
+      )
+    ) {
+      continue;
     }
-    if (item && typeof item === 'object') {
-      const found = extractQrCodeText(item, seen);
-      if (found) return found;
-    }
+
+    const found = extractQrCodeText(item, seen);
+    if (found) return found;
   }
+
   return null;
 }
 
@@ -301,16 +338,49 @@ function normalizeQrDataUrl(value) {
 
 async function qrDataUrlFromEvolutionCode(value) {
   const code = extractQrCodeText(value);
-  if (!code || !QRCode || typeof QRCode.toDataURL !== 'function') return null;
+
+  if (!code || !QRCode || typeof QRCode.toDataURL !== 'function') {
+    return null;
+  }
+
   return QRCode.toDataURL(code, {
-    errorCorrectionLevel: 'H',
+    type: 'image/png',
+    errorCorrectionLevel: 'M',
     margin: 4,
-    width: 640,
+    width: 420,
     color: {
       dark: '#000000',
-      light: '#ffffff'
+      light: '#FFFFFF'
     }
   });
+}
+
+async function buildEvolutionQr(data) {
+  const generated = await qrDataUrlFromEvolutionCode(data);
+
+  if (generated) {
+    return {
+      image: generated,
+      source: 'backend_generated_from_raw_code',
+      rawCodeFound: true
+    };
+  }
+
+  const existing = normalizeQrDataUrl(data);
+
+  if (existing) {
+    return {
+      image: existing,
+      source: 'evolution_image',
+      rawCodeFound: false
+    };
+  }
+
+  return {
+    image: null,
+    source: 'not_found',
+    rawCodeFound: false
+  };
 }
 
 function evolutionHeaders(cfg, variant = 'apikey') {
@@ -623,7 +693,8 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
         try {
           const requestCfg = { ...cfg, key: keyCandidate.key };
           const out = await evolutionHttp(requestCfg, item.route, item.method, { instanceName: item.instance, instance: item.instance });
-          const qr = normalizeQrDataUrl(out.data) || await qrDataUrlFromEvolutionCode(out.data);
+          const qrResult = await buildEvolutionQr(out.data);
+          const qr = qrResult.image;
           const pairingCode = extractPairingCode(out.data);
           attempts.push({
             route: item.route,
@@ -636,7 +707,24 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
             remote_message: remoteMessageFromEvolution(out.data)
           });
           if (out.response.ok && qr) {
-            return { ok: true, success: true, configured: true, status: 'qrcode', instance: item.instance, qrCode: qr, qrcode: qr, qr, pairing_code: pairingCode, route: item.route, raw: redactEvolutionSecrets(out.data), data: redactEvolutionSecrets(out.data), attempts };
+            return {
+              ok: true,
+              success: true,
+              configured: true,
+              connected: false,
+              status: 'qrcode',
+              instance: item.instance,
+              qrCode: qr,
+              qrcode: qr,
+              qr,
+              qr_source: qrResult.source,
+              raw_code_found: qrResult.rawCodeFound,
+              pairing_code: pairingCode,
+              route: item.route,
+              raw: redactEvolutionSecrets(out.data),
+              data: redactEvolutionSecrets(out.data),
+              attempts
+            };
           }
           if (out.response.ok && pairingCode) {
             return { ok: true, success: true, configured: true, status: 'pairing_code', instance: item.instance, pairing_code: pairingCode, route: item.route, raw: redactEvolutionSecrets(out.data), data: redactEvolutionSecrets(out.data), message: 'A Evolution retornou codigo de pareamento, nao QR Code.', attempts };
@@ -658,9 +746,27 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
       createAttempt.instance = createInstance;
       createAttempt.remote_message = remoteMessageFromEvolution(createAttempt.data);
       attempts.push(createAttempt);
-      const qr = normalizeQrDataUrl(createAttempt.data) || await qrDataUrlFromEvolutionCode(createAttempt.data);
+      const qrResult = await buildEvolutionQr(createAttempt.data);
+      const qr = qrResult.image;
       if (createAttempt.response && createAttempt.response.ok && qr) {
-        return { ok: true, success: true, configured: true, status: 'qrcode', instance: createInstance, qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(createAttempt.data), route: createAttempt.route, raw: redactEvolutionSecrets(createAttempt.data), data: redactEvolutionSecrets(createAttempt.data), attempts };
+        return {
+          ok: true,
+          success: true,
+          configured: true,
+          connected: false,
+          status: 'qrcode',
+          instance: createInstance,
+          qrCode: qr,
+          qrcode: qr,
+          qr,
+          qr_source: qrResult.source,
+          raw_code_found: qrResult.rawCodeFound,
+          pairing_code: extractPairingCode(createAttempt.data),
+          route: createAttempt.route,
+          raw: redactEvolutionSecrets(createAttempt.data),
+          data: redactEvolutionSecrets(createAttempt.data),
+          attempts
+        };
       }
     } catch (error) {
       attempts.push({ route: '/instance/create', method: 'POST', instance: createInstance, error: error.message });
@@ -725,8 +831,23 @@ async function evolutionRequest(pathname, method = 'GET', body, overrideConfig =
   try {
     const { response, data } = await evolutionHttp(cfg, path, method, body);
     if (!response.ok) return evolutionHttpError(response, data, cfg, [{ route: path, method, status: response.status, ok: false }]);
-    const qr = normalizeQrDataUrl(data) || await qrDataUrlFromEvolutionCode(data);
-    return { ok: true, success: true, configured: true, status: qr ? 'qrcode' : 'ok', qrCode: qr, qrcode: qr, qr, pairing_code: extractPairingCode(data), raw: redactEvolutionSecrets(data), data: redactEvolutionSecrets(data) };
+    const qrResult = await buildEvolutionQr(data);
+    const qr = qrResult.image;
+    return {
+      ok: true,
+      success: true,
+      configured: true,
+      connected: false,
+      status: qr ? 'qrcode' : 'ok',
+      qrCode: qr,
+      qrcode: qr,
+      qr,
+      qr_source: qrResult.source,
+      raw_code_found: qrResult.rawCodeFound,
+      pairing_code: extractPairingCode(data),
+      raw: redactEvolutionSecrets(data),
+      data: redactEvolutionSecrets(data)
+    };
   } catch (error) {
     return evolutionNetworkError(error);
   }
