@@ -604,39 +604,46 @@
   }
 
   function renderQr(qr) {
-    var value = normalizeQr(qr);
-    if (!value) return false;
-    var src = value.indexOf('data:') === 0 ? value : 'data:image/png;base64,' + value;
-    var els = qrElements();
-    var img = new Image();
-    img.onload = function () {
-      if (els.canvas && els.canvas.getContext) {
-        els.canvas.width = 260;
-        els.canvas.height = 260;
-        els.canvas.style.width = '260px';
-        els.canvas.style.height = '260px';
-        els.canvas.style.background = '#fff';
-        els.canvas.style.borderRadius = '0';
-        els.canvas.style.imageRendering = 'pixelated';
-        var ctx = els.canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = false;
-        ctx.clearRect(0, 0, 260, 260);
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(0, 0, 260, 260);
-        ctx.drawImage(img, 0, 0, 260, 260);
-        els.canvas.style.display = 'block';
-        if (els.load) els.load.style.display = 'none';
-      } else if (els.load) {
-        els.load.style.display = 'flex';
-        els.load.innerHTML = '<img src="' + src + '" alt="QR Code WhatsApp" style="width:260px;height:260px;border-radius:0;background:#fff;image-rendering:pixelated">';
-      }
-    };
-    img.onerror = function () {
-      setQrMessage('A Evolution retornou QR, mas a imagem nao pode ser renderizada. Verifique a resposta da API.', 'error');
-    };
-    img.src = src;
-    return true;
+  var value = normalizeQr(qr);
+  if (!value) return false;
+
+  var src = value.indexOf('data:') === 0
+    ? value
+    : 'data:image/png;base64,' + value;
+
+  var els = qrElements();
+
+  // Esconde o canvas para evitar redimensionamento e deformação.
+  if (els.canvas) {
+    els.canvas.style.display = 'none';
   }
+
+  // Exibe a imagem original enviada pela Evolution.
+  if (els.load) {
+    els.load.style.display = 'flex';
+    els.load.style.alignItems = 'center';
+    els.load.style.justifyContent = 'center';
+
+    els.load.innerHTML =
+      '<img src="' + src + '" ' +
+      'alt="QR Code WhatsApp" ' +
+      'style="' +
+      'display:block;' +
+      'width:260px;' +
+      'height:auto;' +
+      'max-width:100%;' +
+      'aspect-ratio:1/1;' +
+      'object-fit:contain;' +
+      'image-rendering:pixelated;' +
+      'background:#fff;' +
+      'padding:12px;' +
+      'border-radius:10px;' +
+      'margin:0 auto;' +
+      '">';
+  }
+
+  return true;
+}
 
   function applyWATabButtonState(activeTab) {
     ['wtc', 'evo', 'meta'].forEach(function (tab) {
