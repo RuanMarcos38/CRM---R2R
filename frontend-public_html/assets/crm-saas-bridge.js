@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.R2R_BRIDGE_VERSION = '20260726-n8n-backend-probe';
+  window.R2R_BRIDGE_VERSION = '20260804-whatsapp-status-final';
   console.log('[R2R] Backend bridge version', window.R2R_BRIDGE_VERSION);
 
   var TABLE_ENDPOINTS = {
@@ -757,68 +757,349 @@
     }
   };
 
+
+  function whatsappConnectionState(data) {
+    data = data && typeof data === 'object' ? data : {};
+
+    var state = String(
+      data.status ||
+      data.state ||
+      data.connectionStatus ||
+      data.instance_status ||
+      data.data && (
+        data.data.connectionStatus ||
+        data.data.state ||
+        data.data.status
+      ) ||
+      data.raw && (
+        data.raw.connectionStatus ||
+        data.raw.state ||
+        data.raw.status
+      ) ||
+      ''
+    ).toLowerCase();
+
+    return {
+      connected:
+        data.connected === true ||
+        state === 'open' ||
+        state === 'connected',
+      state: state
+    };
+  }
+
+  function setWhatsappConnectedUI(message) {
+    var dot = byId('waStatusDot');
+    var txt = byId('waStatusTxt');
+    var btnOn = byId('waBtnOn') || byId('waBtnConnect');
+    var btnOff = byId('waBtnOff') || byId('waBtnDisconnect');
+
+    if (dot) {
+      dot.style.background = '#22c55e';
+      dot.className = 'wa-dot on';
+    }
+
+    if (txt) {
+      txt.textContent = 'Conectado ✓';
+    }
+
+    if (btnOn) {
+      btnOn.style.display = 'none';
+    }
+
+    if (btnOff) {
+      btnOff.style.display = '';
+    }
+
+    setQrMessage(
+      message ||
+      'WhatsApp conectado com sucesso. A instância está online.',
+      'success'
+    );
+  }
+
+  function setWhatsappWaitingUI(message) {
+    var dot = byId('waStatusDot');
+    var txt = byId('waStatusTxt');
+    var btnOn = byId('waBtnOn') || byId('waBtnConnect');
+    var btnOff = byId('waBtnOff') || byId('waBtnDisconnect');
+
+    if (dot) {
+      dot.style.background = '#f97316';
+      dot.className = 'wa-dot ing';
+    }
+
+    if (txt) {
+      txt.textContent = message || 'Configurado, aguardando conexão';
+    }
+
+    if (btnOn) {
+      btnOn.style.display = '';
+    }
+
+    if (btnOff) {
+      btnOff.style.display = 'none';
+    }
+  }
+
+  function setWhatsappDisconnectedUI(message) {
+    var dot = byId('waStatusDot');
+    var txt = byId('waStatusTxt');
+    var btnOn = byId('waBtnOn') || byId('waBtnConnect');
+    var btnOff = byId('waBtnOff') || byId('waBtnDisconnect');
+
+    if (dot) {
+      dot.style.background = '#ef4444';
+      dot.className = 'wa-dot off';
+    }
+
+    if (txt) {
+      txt.textContent = message || 'Desconectado';
+    }
+
+    if (btnOn) {
+      btnOn.style.display = '';
+    }
+
+    if (btnOff) {
+      btnOff.style.display = 'none';
+    }
+  }
+
+  async function whatsappStatusWithConnectFallback() {
+    var statusData = null;
+
+    try {
+      statusData = await apiFetch('/api/whatsapp/status', {
+        method: 'GET',
+        cache: 'no-store'
+      });
+    } catch (error) {
+      statusData = null;
+    }
+
+    var statusState = whatsappConnectionState(statusData);
+
+    if (statusState.connected) {
+      return statusData;
+    }
+
+    /*
+     * A rota /status da instalação atual pode retornar apenas a configuração.
+     * A rota /connect já foi comprovada retornando connected:true/status:open
+     * quando a instância já está conectada.
+     */
+    var cfg = readWAConfigFromForm();
+
+    return apiFetch('/api/whatsapp/connect', {
+      method: 'POST',
+      body: JSON.stringify({
+        instance: cfg.instance
+      })
+    });
+  }
+
   window.testarEvoAPI = window.checkWAStatus = async function () {
     try {
       await saveWAConfigIfNeeded(false);
-      var data = await apiFetch('/api/whatsapp/status', { method: 'GET' });
-      var dot = byId('waStatusDot');
-      var txt = byId('waStatusTxt');
-      if (dot) dot.style.background = data.connected ? '#22c55e' : '#f97316';
-      if (txt) txt.textContent = data.connected ? 'Conectado' : (data.configured ? 'Configurado, aguardando conexao' : 'Nao configurado');
-      if (data.connected) {
-        setQrMessage('WhatsApp ja esta conectado. Para gerar um novo QR Code, clique em Desconectar e depois em Conectar.', 'success');
+
+      var data = await whatsappStatusWithConnectFallback();
+      var state = whatsappConnectionState(data);
+
+      if (state.connected) {
+        setWhatsappConnectedUI(
+          data.message ||
+          'WhatsApp conectado com sucesso. A instância está online.'
+        );
+        toast('WhatsApp conectado.', 'success');
+        return data;
       }
-      if (!data.configured) setQrMessage(data.message || 'WhatsApp nao configurado. Preencha URL, API Key e instancia.', 'error');
-      toast(data.connected ? 'WhatsApp conectado.' : (data.message || 'Status WhatsApp atualizado.'), data.connected ? 'success' : 'info');
+
+      if (!data || data.configured === false) {
+        setWhatsappDisconnectedUI('Não configurado');
+        setQrMessage(
+          data && data.message ||
+          'WhatsApp não configurado. Preencha URL, API Key e instância.',
+          'error'
+        );
+        toast(
+          data && data.message || 'WhatsApp não configurado.',
+          'warn'
+        );
+        return data;
+      }
+
+      if (
+        state.state === 'close' ||
+        state.state === 'closed' ||
+        state.state === 'disconnected'
+      ) {
+        setWhatsappDisconnectedUI('Desconectado');
+      } else {
+        setWhatsappWaitingUI('Configurado, aguardando conexão');
+      }
+
+      toast(
+        data.message || 'Status do WhatsApp atualizado.',
+        'info'
+      );
+
+      return data;
     } catch (error) {
       toast('Erro WhatsApp: ' + error.message, 'error');
-      setQrMessage('Erro ao verificar WhatsApp: ' + error.message, 'error');
+      setWhatsappDisconnectedUI('Erro de conexão');
+      setQrMessage(
+        'Erro ao verificar WhatsApp: ' + error.message,
+        'error'
+      );
+      return null;
     }
   };
 
   window.conectarWA = window.conectarWhatsApp = async function () {
     try {
-      setQrBusy('Gerando QR Code...');
+      setQrBusy('Verificando conexão...');
+
       var cfg = readWAConfigFromForm();
       var saved = await saveWAConfigIfNeeded(true);
-      if (!saved) return;
-      var payload = { instance: cfg.instance };
-      if (cfg.url) payload.url = cfg.url;
-      if (cfg.apiKey) payload.apiKey = cfg.apiKey;
-      var data = await apiFetch('/api/whatsapp/connect', { method: 'POST', body: JSON.stringify(payload) });
-      var qr = data.qr || data.qrcode || data.base64 || data.data;
-      if (!data.configured) {
-        setQrMessage(data.message || 'WhatsApp nao configurado no backend.', 'error');
-        toast(data.message || 'WhatsApp nao configurado.', 'warn');
-      } else if (renderQr(qr)) {
-        toast('QR Code gerado pelo backend.', 'success');
-      } else if (data.connected || data.status === 'open') {
-        setQrMessage(data.message || 'WhatsApp ja esta conectado. Para gerar outro QR Code, desconecte a instancia primeiro.', 'success');
-        toast('WhatsApp ja esta conectado.', 'success');
-      } else if (data.pairing_code) {
-        setQrMessage('A Evolution retornou codigo de pareamento: ' + data.pairing_code, 'warn');
-        toast('A Evolution retornou codigo de pareamento, nao QR Code.', 'warn');
-      } else {
-        setQrMessage(data.message || 'A Evolution API respondeu, mas nao retornou QR Code. Verifique URL, API Key e nome da instancia.', data.ok === false ? 'error' : 'warn');
-        toast(data.message || 'Solicitacao enviada para Evolution API.', 'info');
+
+      if (!saved) {
+        return null;
       }
+
+      var payload = {
+        instance: cfg.instance
+      };
+
+      if (cfg.url) {
+        payload.url = cfg.url;
+      }
+
+      if (cfg.apiKey) {
+        payload.apiKey = cfg.apiKey;
+      }
+
+      var data = await apiFetch('/api/whatsapp/connect', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      var state = whatsappConnectionState(data);
+
+      /*
+       * Esta verificação precisa vir antes de renderQr().
+       * A resposta pode trazer QR antigo junto com connected:true/status:open.
+       */
+      if (state.connected) {
+        setWhatsappConnectedUI(
+          data.message ||
+          'WhatsApp já está conectado na Evolution API.'
+        );
+        toast('WhatsApp já está conectado.', 'success');
+        return data;
+      }
+
+      if (data.configured === false) {
+        setWhatsappDisconnectedUI('Não configurado');
+        setQrMessage(
+          data.message || 'WhatsApp não configurado no backend.',
+          'error'
+        );
+        toast(
+          data.message || 'WhatsApp não configurado.',
+          'warn'
+        );
+        return data;
+      }
+
+      var qr =
+        data.qrCode ||
+        data.qrcode ||
+        data.qr ||
+        data.base64 ||
+        data.data;
+
+      if (renderQr(qr)) {
+        setWhatsappWaitingUI('Escaneie o QR Code no WhatsApp');
+        toast('QR Code gerado pelo backend.', 'success');
+
+        if (window._wa_timer) {
+          clearInterval(window._wa_timer);
+        }
+
+        window._wa_timer = setInterval(function () {
+          window.checkWAStatus();
+        }, 3000);
+
+        return data;
+      }
+
+      if (data.pairing_code) {
+        setWhatsappWaitingUI('Aguardando pareamento');
+        setQrMessage(
+          'A Evolution retornou código de pareamento: ' +
+          data.pairing_code,
+          'warn'
+        );
+        toast(
+          'A Evolution retornou código de pareamento, não QR Code.',
+          'warn'
+        );
+        return data;
+      }
+
+      setWhatsappWaitingUI('Configurado, aguardando conexão');
+      setQrMessage(
+        data.message ||
+        'A Evolution respondeu, mas não retornou QR Code.',
+        data.ok === false ? 'error' : 'warn'
+      );
+      toast(
+        data.message || 'Solicitação enviada para Evolution API.',
+        'info'
+      );
+
+      return data;
     } catch (error) {
-      toast('Erro ao conectar WhatsApp: ' + error.message, 'error');
-      setQrMessage('Erro ao conectar WhatsApp: ' + error.message, 'error');
+      toast(
+        'Erro ao conectar WhatsApp: ' + error.message,
+        'error'
+      );
+      setWhatsappDisconnectedUI('Erro de conexão');
+      setQrMessage(
+        'Erro ao conectar WhatsApp: ' + error.message,
+        'error'
+      );
+      return null;
     }
   };
 
-  window.desconectarWA = async function () {
+  window.desconectarWA = window.desconectarWhatsApp = async function () {
     try {
-      await apiFetch('/api/whatsapp/disconnect', { method: 'POST', body: JSON.stringify({}) });
-      var dot = byId('waStatusDot');
-      var txt = byId('waStatusTxt');
-      if (dot) dot.style.background = '#f97316';
-      if (txt) txt.textContent = 'Desconectado';
-      setQrMessage('WhatsApp desconectado. Clique em Conectar para gerar um novo QR Code.', 'warn');
-      toast('Comando de desconexao enviado.', 'success');
+      if (window._wa_timer) {
+        clearInterval(window._wa_timer);
+        window._wa_timer = null;
+      }
+
+      var cfg = readWAConfigFromForm();
+
+      await apiFetch('/api/whatsapp/disconnect', {
+        method: 'POST',
+        body: JSON.stringify({
+          instance: cfg.instance
+        })
+      });
+
+      setWhatsappDisconnectedUI('Desconectado');
+      setQrMessage(
+        'WhatsApp desconectado. Clique em Conectar para gerar um novo QR Code.',
+        'warn'
+      );
+      toast('WhatsApp desconectado.', 'success');
+      return true;
     } catch (error) {
       toast('Erro ao desconectar: ' + error.message, 'error');
+      return false;
     }
   };
 
@@ -1236,4 +1517,34 @@
     if (window.R2R_BACKEND_READY) await loadSecurityContext();
     setTimeout(function () { clearFrontendSecrets(); applyFeatureFlagsUI(window.R2R_FEATURES || {}); }, 1200);
   });
+
+  function startWhatsappStatusSync() {
+    setTimeout(function () {
+      if (typeof window.checkWAStatus === 'function') {
+        window.checkWAStatus();
+      }
+    }, 1500);
+
+    setInterval(function () {
+      var panel = byId('wa-panel-evo');
+      var statusText = byId('waStatusTxt');
+
+      if (
+        statusText &&
+        (!panel || panel.style.display !== 'none')
+      ) {
+        window.checkWAStatus();
+      }
+    }, 10000);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener(
+      'DOMContentLoaded',
+      startWhatsappStatusSync
+    );
+  } else {
+    startWhatsappStatusSync();
+  }
+
 })();
