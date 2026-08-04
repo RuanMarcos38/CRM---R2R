@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '20260804-direct-crm-official-evolution-qr';
+  var VERSION = '20260804-direct-crm-pedrohb-final';
   if (window.R2R_EVOLUTION_RUNTIME_FIX === VERSION) return;
   window.R2R_EVOLUTION_RUNTIME_FIX = VERSION;
 
@@ -121,7 +121,7 @@
       }
     }
 
-    return 'ruan';
+    return 'pedrohb';
   }
 
   function toast(message, type) {
