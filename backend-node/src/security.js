@@ -3,19 +3,71 @@ const { listEnv, numberEnv } = require('./env');
 
 const buckets = new Map();
 
+/**
+ * Monta os cabeçalhos CORS de forma segura.
+ *
+ * Regras:
+ * - Em produção, nunca usa "*" com credenciais.
+ * - Só libera origens configuradas em CORS_ORIGIN e FRONTEND_URL.
+ * - Envia Access-Control-Allow-Credentials=true quando a origem é específica.
+ * - Mantém compatibilidade com requisições sem Origin (health checks, chamadas internas).
+ */
 function corsHeaders(reqOrigin) {
-  const configured = [...listEnv('CORS_ORIGIN', []), ...listEnv('FRONTEND_URL', [])];
-  const production = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
-  const raw = configured.length ? [...new Set(configured)] : (production ? [] : ['*']);
-  const allowAll = raw.includes('*') && !production;
-  const origin = allowAll ? '*' : (reqOrigin && raw.includes(reqOrigin) ? reqOrigin : (!reqOrigin ? raw[0] : ''));
+  const configured = [
+    ...listEnv('CORS_ORIGIN', []),
+    ...listEnv('FRONTEND_URL', [])
+  ]
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+
+  const production =
+    String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+
+  const uniqueOrigins = [...new Set(configured)];
+
+  const allowAllInDevelopment =
+    !production && uniqueOrigins.includes('*');
+
+  let origin = '';
+
+  if (allowAllInDevelopment) {
+    origin = '*';
+  } else if (reqOrigin && uniqueOrigins.includes(reqOrigin)) {
+    origin = reqOrigin;
+  } else if (!reqOrigin && uniqueOrigins.length > 0) {
+    /*
+     * Requisições sem Origin normalmente são chamadas internas,
+     * health checks, curl, serviços backend-to-backend etc.
+     */
+    origin = uniqueOrigins.find(item => item !== '*') || '';
+  }
+
   const headers = {
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization,apikey,x-api-key,x-evolution-secret,x-billing-secret,x-webhook-secret,x-payment-secret',
+    'Access-Control-Allow-Methods':
+      'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers':
+      'Content-Type,Authorization,apikey,x-api-key,x-evolution-secret,x-billing-secret,x-webhook-secret,x-payment-secret',
     'Access-Control-Max-Age': '86400'
   };
-  if (origin) headers['Access-Control-Allow-Origin'] = origin;
-  if (origin && origin !== '*') headers.Vary = 'Origin';
+
+  if (origin) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+
+  /*
+   * Nunca combine "*" com credenciais.
+   * Para o CRM em produção, o header esperado será:
+   *
+   * Access-Control-Allow-Origin:
+   * https://crm.r2rmarketingdigital.com.br
+   *
+   * Access-Control-Allow-Credentials: true
+   */
+  if (origin && origin !== '*') {
+    headers['Access-Control-Allow-Credentials'] = 'true';
+    headers.Vary = 'Origin';
+  }
+
   return headers;
 }
 
@@ -24,24 +76,42 @@ function securityHeaders() {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'SAMEORIGIN',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
-    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()'
+    'Permissions-Policy':
+      'camera=(), microphone=(), geolocation=()'
   };
 }
 
 function checkRateLimit(req) {
   const max = numberEnv('RATE_LIMIT_MAX', 240);
-  const windowMs = numberEnv('RATE_LIMIT_WINDOW_MS', 60_000);
+  const windowMs = numberEnv(
+    'RATE_LIMIT_WINDOW_MS',
+    60_000
+  );
+
   if (!max || max < 1) return true;
 
-  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+  const ip = String(
+    req.headers['x-forwarded-for'] ||
+    req.socket.remoteAddress ||
+    'unknown'
+  )
+    .split(',')[0]
+    .trim();
+
   const key = `${ip}:${Math.floor(Date.now() / windowMs)}`;
   const used = (buckets.get(key) || 0) + 1;
+
   buckets.set(key, used);
 
   if (buckets.size > 5000) {
-    const currentWindow = Math.floor(Date.now() / windowMs);
+    const currentWindow = Math.floor(
+      Date.now() / windowMs
+    );
+
     for (const item of buckets.keys()) {
-      if (!item.endsWith(`:${currentWindow}`)) buckets.delete(item);
+      if (!item.endsWith(`:${currentWindow}`)) {
+        buckets.delete(item);
+      }
     }
   }
 
@@ -49,43 +119,96 @@ function checkRateLimit(req) {
 }
 
 function sha256(value) {
-  return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+  return crypto
+    .createHash('sha256')
+    .update(String(value || ''))
+    .digest('hex');
 }
 
 function randomToken(prefix = 'r2r') {
-  return `${prefix}_${crypto.randomBytes(24).toString('hex')}`;
+  return `${prefix}_${crypto
+    .randomBytes(24)
+    .toString('hex')}`;
 }
 
 function stripSensitiveFields(input) {
-  if (Array.isArray(input)) return input.map(stripSensitiveFields);
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
-  const blocked = ['token', 'access_token', 'api_key', 'apikey', 'secret', 'password', 'service_role', 'key'];
+  if (Array.isArray(input)) {
+    return input.map(stripSensitiveFields);
+  }
+
+  if (!input || typeof input !== 'object') {
+    return input;
+  }
+
+  const blocked = [
+    'token',
+    'access_token',
+    'api_key',
+    'apikey',
+    'secret',
+    'password',
+    'service_role',
+    'key'
+  ];
+
   const out = {};
+
   for (const [key, value] of Object.entries(input)) {
     const lowered = key.toLowerCase();
+
     if (blocked.some(term => lowered.includes(term))) {
       out[key] = value ? '[redacted]' : value;
-    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+    } else if (value && typeof value === 'object') {
       out[key] = stripSensitiveFields(value);
     } else {
       out[key] = value;
     }
   }
+
   return out;
 }
 
 function sanitizePayload(payload, options = {}) {
   const out = {};
-  const source = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
-  const blocked = new Set(['id', 'created_at', 'updated_at']);
-  if (options.blockCompanyId) blocked.add('empresa_id');
+
+  const source =
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload)
+      ? payload
+      : {};
+
+  const blocked = new Set([
+    'id',
+    'created_at',
+    'updated_at'
+  ]);
+
+  if (options.blockCompanyId) {
+    blocked.add('empresa_id');
+  }
 
   for (const [key, value] of Object.entries(source)) {
     if (blocked.has(key)) continue;
-    if (typeof value === 'string') out[key] = value.trim();
-    else out[key] = value;
+
+    if (typeof value === 'string') {
+      out[key] = value.trim();
+    } else {
+      out[key] = value;
+    }
   }
-  return options.allowSensitive ? out : stripSensitiveFields(out);
+
+  return options.allowSensitive
+    ? out
+    : stripSensitiveFields(out);
 }
 
-module.exports = { corsHeaders, securityHeaders, checkRateLimit, sha256, randomToken, sanitizePayload, stripSensitiveFields };
+module.exports = {
+  corsHeaders,
+  securityHeaders,
+  checkRateLimit,
+  sha256,
+  randomToken,
+  sanitizePayload,
+  stripSensitiveFields
+};
