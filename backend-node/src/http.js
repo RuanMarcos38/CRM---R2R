@@ -85,12 +85,13 @@ function sendText(req, res, status, text, headers = {}) {
   res.end(text);
 }
 
-function serveFile(req, res, filePath) {
+function serveFile(req, res, filePath, headers = {}) {
   const reqOrigin = req.headers.origin;
   res.writeHead(200, {
     'Content-Type': contentType(filePath),
     ...corsHeaders(reqOrigin),
-    ...securityHeaders()
+    ...securityHeaders(),
+    ...headers
   });
   fs.createReadStream(filePath).pipe(res);
 }

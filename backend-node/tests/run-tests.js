@@ -201,6 +201,62 @@ test('servidor responde health, login, rotas protegidas e Evolution sem config',
     out = await request(base, 'GET', '/api/health');
     assert.strictEqual(out.res.status, 200);
     assert.strictEqual(out.data.success, true);
+    assert.strictEqual(out.data.frontend_release, '2026.08.06-new-crm');
+
+    out = await request(base, 'GET', '/dashboard');
+    assert.strictEqual(out.res.status, 200);
+    assert.ok(out.data.raw.includes('Dashboard comercial — R2R CRM'));
+    assert.strictEqual(out.res.headers.get('cache-control'), 'no-cache, no-store, must-revalidate');
+    assert.strictEqual(out.res.headers.get('x-r2r-release'), '2026.08.06-new-crm');
+
+    const serverFnId = 'a'.repeat(64);
+    let serverFnHit = false;
+    const fakeLovable = http.createServer((proxyReq, proxyRes) => {
+      if (proxyReq.method === 'GET' && proxyReq.url === '/') {
+        proxyRes.writeHead(200, {
+          'Content-Type': 'text/html',
+          'Set-Cookie': '__cf_bm=test-cookie; Path=/; HttpOnly; Secure'
+        });
+        proxyRes.end('<!doctype html><title>Lovable</title>');
+        return;
+      }
+      if (proxyReq.method === 'POST' && proxyReq.url === `/_serverFn/${serverFnId}`) {
+        const chunks = [];
+        proxyReq.on('data', chunk => chunks.push(chunk));
+        proxyReq.on('end', () => {
+          serverFnHit = true;
+          assert.strictEqual(proxyReq.headers['x-tsr-serverfn'], 'true');
+          assert.strictEqual(proxyReq.headers.authorization, 'Bearer proxy-token');
+          assert.ok(String(proxyReq.headers.cookie || '').includes('__cf_bm=test-cookie'));
+          assert.deepStrictEqual(JSON.parse(Buffer.concat(chunks).toString('utf8')), { companyId: 'empresa-teste' });
+          proxyRes.writeHead(201, {
+            'Content-Type': 'application/json',
+            'X-Tss-Serialized': 'true',
+            'Cache-Control': 'no-store'
+          });
+          proxyRes.end(JSON.stringify({ ok: true, proxied: true }));
+        });
+        return;
+      }
+      proxyRes.writeHead(404, { 'Content-Type': 'application/json' });
+      proxyRes.end(JSON.stringify({ ok: false }));
+    });
+    await new Promise(resolve => fakeLovable.listen(0, '127.0.0.1', resolve));
+    process.env.R2R_LOVABLE_ORIGIN = 'http://127.0.0.1:' + fakeLovable.address().port;
+    try {
+      out = await request(base, 'POST', `/_serverFn/${serverFnId}`, { companyId: 'empresa-teste' }, 'proxy-token');
+      assert.strictEqual(out.res.status, 201);
+      assert.strictEqual(out.data.proxied, true);
+      assert.strictEqual(out.res.headers.get('x-tss-serialized'), 'true');
+      assert.strictEqual(out.res.headers.get('x-r2r-release'), '2026.08.06-new-crm');
+      assert.strictEqual(serverFnHit, true);
+
+      out = await request(base, 'PUT', `/_serverFn/${serverFnId}`, {});
+      assert.strictEqual(out.res.status, 405);
+    } finally {
+      delete process.env.R2R_LOVABLE_ORIGIN;
+      await new Promise(resolve => fakeLovable.close(resolve));
+    }
 
     const oldNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';

@@ -1,6 +1,6 @@
 {
   "name": "r2r-crm-saas",
-  "version": "2026.06.29",
+  "version": "2026.08.06",
   "description": "CRM SaaS multiempresa para marketing digital, com Node.js e Supabase",
   "main": "server.js",
   "scripts": {
