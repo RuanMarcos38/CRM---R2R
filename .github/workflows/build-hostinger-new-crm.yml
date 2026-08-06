@@ -1,0 +1,55 @@
+name: Gerar pacote do novo CRM para Hostinger
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/hostinger-new-crm
+    paths:
+      - .github/workflows/build-hostinger-new-crm.yml
+      - scripts/build-hostinger-from-lovable.mjs
+      - scripts/verify-hostinger-build.mjs
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hostinger-new-crm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Baixar o repositório
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Gerar o pacote Hostinger
+        run: node scripts/build-hostinger-from-lovable.mjs frontend-public_html
+
+      - name: Validar arquivos e rotas
+        run: |
+          node scripts/verify-hostinger-build.mjs frontend-public_html
+          php -l frontend-public_html/serverfn-proxy.php
+
+      - name: Publicar o build na branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm --cached --ignore-unmatch .env
+          git add -A frontend-public_html
+          if git diff --cached --quiet; then
+            echo "O pacote já está atualizado."
+          else
+            git commit -m "Build do novo CRM para Hostinger"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
