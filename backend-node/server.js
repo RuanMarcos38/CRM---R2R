@@ -33,7 +33,8 @@ const {
   isCompanyAdmin
 } = require('./src/access');
 
-const VERSION = '2026.07.05-evolution-single-instance-fallback';
+const VERSION = '2026.08.06-new-crm';
+const LOVABLE_ORIGIN = 'https://salesignite-ops.lovable.app';
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = resolvePublicDir();
@@ -50,6 +51,7 @@ function healthPayload(req) {
     status: 'online',
     service: 'r2r-crm-saas-api',
     version: VERSION,
+    frontend_release: VERSION,
     environment: process.env.NODE_ENV || 'development',
     time: new Date().toISOString(),
     storage: store.kind,
@@ -1837,20 +1839,156 @@ async function audit(ctx, action, entity, entityId, changes) {
   } catch (_) {}
 }
 
+function readRawRequest(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    const maxBytes = numberEnv('SERVER_FN_BODY_LIMIT_BYTES', 15_000_000);
+
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        const error = new Error('Payload muito grande.');
+        error.statusCode = 413;
+        req.destroy(error);
+        reject(error);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function responseCookies(headers) {
+  if (typeof headers.getSetCookie === 'function') {
+    return headers.getSetCookie().map(value => value.split(';', 1)[0]).filter(Boolean).join('; ');
+  }
+  const value = headers.get('set-cookie');
+  return value ? value.split(/,(?=\s*[^;,]+=)/).map(item => item.split(';', 1)[0]).join('; ') : '';
+}
+
+async function handleLovableServerFunction(req, res, url) {
+  const match = url.pathname.match(/^\/_serverFn\/([a-f0-9]{64})$/);
+  if (!match) return null;
+
+  if (!['GET', 'POST'].includes(req.method)) {
+    return sendJson(req, res, 405, { ok: false, error: 'Metodo nao permitido.' }, { Allow: 'GET, POST' });
+  }
+
+  const origin = cleanUrl(process.env.R2R_LOVABLE_ORIGIN || LOVABLE_ORIGIN);
+  const upstreamUrl = new URL(`/_serverFn/${match[1]}`, origin);
+  const userAgent = String(req.headers['user-agent'] || 'Mozilla/5.0 R2R-CRM-EasyPanel');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), numberEnv('SERVER_FN_TIMEOUT_MS', 60_000));
+
+  try {
+    const body = req.method === 'POST' ? await readRawRequest(req) : undefined;
+    const bootstrap = await fetch(new URL('/', origin), {
+      method: 'GET',
+      redirect: 'follow',
+      headers: {
+        Accept: 'text/html,application/xhtml+xml',
+        'User-Agent': userAgent
+      },
+      signal: controller.signal
+    });
+    const cookie = responseCookies(bootstrap.headers);
+    await bootstrap.arrayBuffer();
+
+    const headers = {
+      Accept: String(req.headers.accept || 'application/json'),
+      'Content-Type': String(req.headers['content-type'] || 'application/json'),
+      Origin: origin,
+      Referer: `${origin}/`,
+      'User-Agent': userAgent,
+      'X-Tsr-ServerFn': 'true'
+    };
+    if (req.headers.authorization) headers.Authorization = String(req.headers.authorization);
+    if (cookie) headers.Cookie = cookie;
+
+    const upstream = await fetch(upstreamUrl, {
+      method: req.method,
+      redirect: 'manual',
+      headers,
+      body,
+      signal: controller.signal
+    });
+    const responseBody = Buffer.from(await upstream.arrayBuffer());
+    const responseHeaders = {
+      ...corsHeaders(req.headers.origin),
+      ...securityHeaders(),
+      'Content-Type': upstream.headers.get('content-type') || 'application/octet-stream',
+      'Cache-Control': upstream.headers.get('cache-control') || 'no-store',
+      'X-R2R-Release': VERSION
+    };
+    for (const name of ['x-tss-serialized', 'x-tss-raw']) {
+      const value = upstream.headers.get(name);
+      if (value) responseHeaders[name] = value;
+    }
+    res.writeHead(upstream.status || 502, responseHeaders);
+    res.end(responseBody);
+    return true;
+  } catch (error) {
+    console.error('[serverFn-proxy]', error && error.message || error);
+    return sendJson(req, res, error.statusCode || 502, {
+      ok: false,
+      error: error.statusCode === 413
+        ? error.message
+        : 'Nao foi possivel conectar as funcoes do CRM.'
+    }, { 'Cache-Control': 'no-store', 'X-R2R-Release': VERSION });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function handleStatic(req, res, url) {
-  let requested = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
-  let filePath = path.join(PUBLIC_DIR, requested);
   const publicRoot = path.resolve(PUBLIC_DIR);
-  const resolvedFile = path.resolve(filePath);
-  if (resolvedFile !== publicRoot && !resolvedFile.startsWith(publicRoot + path.sep)) return sendText(req, res, 403, 'Forbidden');
-  if (!fs.existsSync(resolvedFile) || fs.statSync(resolvedFile).isDirectory()) return sendText(req, res, 404, 'Not found');
+  const requested = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
+  const relative = requested.replace(/^\/+/, '');
+  const candidates = [relative];
+  if (!path.extname(relative)) {
+    candidates.push(path.join(relative, 'index.html'));
+    candidates.push(`${relative}.html`);
+  }
+
+  let resolvedFile = null;
+  for (const candidate of candidates) {
+    const resolved = path.resolve(publicRoot, candidate);
+    if (resolved !== publicRoot && !resolved.startsWith(publicRoot + path.sep)) {
+      return sendText(req, res, 403, 'Forbidden');
+    }
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+      resolvedFile = resolved;
+      break;
+    }
+  }
+
+  if (!resolvedFile && ['GET', 'HEAD'].includes(req.method) && !path.extname(relative)) {
+    const spaEntry = path.join(publicRoot, 'index.html');
+    if (fs.existsSync(spaEntry)) resolvedFile = spaEntry;
+  }
+  if (!resolvedFile) {
+    return sendText(req, res, 404, 'Not found', { 'Cache-Control': 'no-store', 'X-R2R-Release': VERSION });
+  }
 
   if (path.extname(resolvedFile).toLowerCase() === '.html') {
     const html = fs.readFileSync(resolvedFile, 'utf8');
-    return sendText(req, res, 200, injectRuntimeConfig(html, req), { 'Content-Type': 'text/html; charset=utf-8' });
+    return sendText(req, res, 200, injectRuntimeConfig(html, req), {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+      'X-R2R-Release': VERSION
+    });
   }
 
-  return serveFile(req, res, resolvedFile);
+  const isVersionedAsset = resolvedFile.startsWith(path.join(publicRoot, 'assets') + path.sep);
+  return serveFile(req, res, resolvedFile, {
+    'Cache-Control': isVersionedAsset ? 'public, max-age=31536000, immutable' : 'public, max-age=3600',
+    'X-R2R-Release': VERSION
+  });
 }
 
 async function handleRequest(req, res) {
@@ -1867,6 +2005,9 @@ async function handleRequest(req, res) {
 
     const publicResult = await handlePublic(req, res, url);
     if (publicResult !== null) return publicResult;
+
+    const lovableServerFunction = await handleLovableServerFunction(req, res, url);
+    if (lovableServerFunction !== null) return lovableServerFunction;
 
     const evolutionWebhook = await handleEvolutionWebhook(req, res, url);
     if (evolutionWebhook !== null) return evolutionWebhook;

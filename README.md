@@ -7,6 +7,7 @@ Repositório de produção do R2R CRM, com backend Node.js para o EasyPanel e fr
 - `frontend-public_html/`: pacote completo que deve ficar diretamente no `public_html` do subdomínio do CRM.
 - `backend-node/`: API Node.js usada no EasyPanel.
 - `server.js`: entrada de compatibilidade para o deploy do backend pela raiz.
+- o servidor Node resolve as rotas SPA e encaminha somente os IDs válidos de `/_serverFn/` ao aplicativo publicado no Lovable.
 - `scripts/build-hostinger-from-lovable.mjs`: atualiza o pacote Hostinger a partir da publicação aprovada do Lovable.
 - `scripts/verify-hostinger-build.mjs`: verifica rotas e dependências do pacote antes do envio.
 
@@ -46,6 +47,7 @@ HOST=0.0.0.0
 PUBLIC_DIR=/app/frontend-public_html
 FRONTEND_URL=https://crm.r2rmarketingdigital.com.br
 CORS_ORIGIN=https://crm.r2rmarketingdigital.com.br
+R2R_LOVABLE_ORIGIN=https://salesignite-ops.lovable.app
 ```
 
 As demais variáveis sensíveis devem ser configuradas somente no painel do EasyPanel. Arquivos `.env` reais não devem ser versionados.
