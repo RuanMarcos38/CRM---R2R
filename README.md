@@ -1,71 +1,1116 @@
-# R2R CRM SaaS
+# Remix of Flow CRM
 
-Versao oficial do CRM R2R para producao no EasyPanel/VPS.
+PROMPT PARA LOVABLE
 
-- Backend Node: `backend-node/`
-- Frontend servido pelo backend: `frontend-public_html/`
-- Supabase SQL: `supabase/`
-- Documentacao: `docs/`
+Crie um CRM SaaS completo, moderno, escalável e responsivo, com arquitetura profissional, interface premium e foco em vendas, atendimento, automação e gestão de clientes.
 
-## Deploy oficial no EasyPanel
+O sistema deve possuir autenticação segura, multiempresa (multi-tenant), controle de permissões por usuário e banco de dados estruturado.
 
-Publique este repositorio pela **raiz** como uma aplicacao App/Node/Docker. Nao use Static Site.
+Design
 
-- Repositorio: `RuanMarcos38/CRM---R2R`
-- Branch: `main`
-- Build path: `/`
-- Build method: `Dockerfile`
-- Dockerfile path: `Dockerfile`
-- Start command: usar o `CMD` do Dockerfile (`npm start`)
-- Porta interna/proxy: `3000`
-- Host interno: `0.0.0.0`
-- Health check: `/api/health`
-- Dominio principal do CRM/API: `crm.r2rmarketingdigital.com.br`
-- Subdominio opcional de API: somente use `api.r2rmarketingdigital.com.br` se ele apontar para este mesmo app Node
-- Protocolo entre proxy e container: `HTTP`
-- HTTPS publico: Let's Encrypt automatico do EasyPanel
+Interface moderna estilo HubSpot, Kommo e Notion.
 
-O EasyPanel deve ter **Auto Deploy** ativado depois que o servico estiver funcionando. Assim, cada push na branch `main` inicia um novo deploy.
+Tema claro e escuro.
 
-## Variaveis publicas de producao
+Totalmente responsivo.
 
-```env
-NODE_ENV=production
-PORT=3000
-HOST=0.0.0.0
-PUBLIC_DIR=/app/frontend-public_html
-APP_URL=https://crm.r2rmarketingdigital.com.br
-PUBLIC_URL=https://crm.r2rmarketingdigital.com.br
-FRONTEND_URL=https://crm.r2rmarketingdigital.com.br
-CORS_ORIGIN=https://crm.r2rmarketingdigital.com.br
-ALLOW_DEMO_AUTH=false
-ALLOW_EMAIL_PROFILE_LINK=false
-ALLOW_GLOBAL_INTEGRATION_FALLBACK=false
+Dashboard com gráficos.
+
+Sidebar recolhível.
+
+Cards modernos.
+
+Animações suaves.
+
+Pesquisa global.
+
+Atalhos de teclado.
+
+Componentização completa.
+
+LOGIN
+
+Login
+
+Cadastro
+
+Recuperação de senha
+
+Verificação por email
+
+2FA
+
+Sessões ativas
+
+Logout em todos dispositivos
+
+EMPRESAS
+
+Cada empresa possui seus próprios:
+
+usuários
+
+clientes
+
+contatos
+
+funil
+
+whatsapp
+
+automações
+
+campanhas
+
+etiquetas
+
+configurações
+
+Nenhuma empresa visualiza dados de outra.
+
+USUÁRIOS
+
+Tipos:
+
+Administrador
+
+Supervisor
+
+Vendedor
+
+Atendente
+
+Financeiro
+
+Marketing
+
+Permissões individuais.
+
+DASHBOARD
+
+Mostrar:
+
+Total de Leads
+
+Novos Leads
+
+Clientes
+
+Conversões
+
+Mensagens enviadas
+
+Mensagens recebidas
+
+Vendas
+
+Valor vendido
+
+Funis
+
+Tickets
+
+Atendimentos ativos
+
+Tempo médio de resposta
+
+Gráfico diário
+
+Gráfico semanal
+
+Gráfico mensal
+
+Gráfico anual
+
+Ranking vendedores
+
+Origem dos Leads
+
+Funil de vendas
+
+Meta x realizado
+
+CRM
+
+Cadastro completo de clientes.
+
+Campos:
+
+Nome
+
+Empresa
+
+CPF
+
+CNPJ
+
+Telefone
+
+WhatsApp
+
+Email
+
+Instagram
+
+Facebook
+
+LinkedIn
+
+Site
+
+Origem
+
+Canal
+
+Responsável
+
+Status
+
+Tags
+
+Observações
+
+Cidade
+
+Estado
+
+País
+
+CEP
+
+Endereço
+
+Data nascimento
+
+Cargo
+
+Segmento
+
+Valor potencial
+
+LTV
+
+Score
+
+Documentos
+
+Anexos
+
+Histórico completo.
+
+LEADS
+
+Entrada manual.
+
+Importação CSV.
+
+Importação Excel.
+
+Captura via API.
+
+Landing Pages.
+
+Facebook Leads.
+
+Google Ads.
+
+Formulários.
+
+QR Code.
+
+WhatsApp.
+
+Instagram.
+
+API pública.
+
+Webhook.
+
+QR CODE
+
+Gerador de QR Code.
+
+Cada QR pode abrir:
+
+WhatsApp
+
+Landing Page
+
+Catálogo
+
+Produto
+
+Atendente específico
+
+Campanha
+
+Funil
+
+Origem personalizada
+
+Cada leitura deve gerar:
+
+Lead
+
+Origem
+
+Data
+
+Hora
+
+Localização (quando permitido)
+
+Dispositivo
+
+Conversão
+
+Estatísticas completas.
+
+WHATSAPP
+
+Sistema semelhante ao Kommo e GoHighLevel.
+
+Suporte para múltiplas instâncias.
+
+Cada empresa pode conectar várias contas.
+
+Conectar via QR Code.
+
+Reconectar automaticamente.
+
+Status Online.
+
+Status Offline.
+
+Fila.
+
+Sessões.
+
+Logs.
+
+Histórico.
+
+Múltiplas conexões simultâneas.
+
+CHAT
+
+Tela semelhante ao WhatsApp Web.
+
+Lista conversas.
+
+Busca.
+
+Filtros.
+
+Fixar conversa.
+
+Favoritos.
+
+Arquivar.
+
+Transferir atendimento.
+
+Responder.
+
+Áudios.
+
+Vídeos.
+
+PDF.
+
+Imagens.
+
+GIF.
+
+Emoji.
+
+Reações.
+
+Resposta rápida.
+
+Mensagem interna.
+
+Notas privadas.
+
+Mensagens agendadas.
+
+Assinatura automática.
+
+Preview de links.
+
+Indicador digitando.
+
+Mensagem entregue.
+
+Mensagem lida.
+
+Tempo resposta.
+
+CHATBOT
+
+Fluxo visual.
+
+Drag and Drop.
+
+Menus.
+
+Botões.
+
+Listas.
+
+Condição.
+
+Variáveis.
+
+IA.
+
+Transferência humano.
+
+Palavras-chave.
+
+Atendimento automático.
+
+IA
+
+Integração com modelos de IA.
+
+Responder automaticamente.
+
+Resumir conversa.
+
+Criar tarefas.
+
+Criar oportunidades.
+
+Analisar sentimento.
+
+Classificar lead.
+
+Gerar respostas.
+
+Gerar emails.
+
+Gerar mensagens WhatsApp.
+
+Sugerir próximos passos.
+
+KANBAN
+
+Funis ilimitados.
+
+Etapas ilimitadas.
+
+Arrastar e soltar.
+
+Automações por etapa.
+
+Cores.
+
+Probabilidade.
+
+Valor.
+
+Responsável.
+
+Previsão fechamento.
+
+Produtos.
+
+Histórico.
+
+OPORTUNIDADES
+
+Pipeline completo.
+
+Valor.
+
+Produto.
+
+Serviço.
+
+Origem.
+
+Contato.
+
+Empresa.
+
+Status.
+
+Perdido.
+
+Ganho.
+
+Motivo perda.
+
+Probabilidade.
+
+Comissão.
+
+TAREFAS
+
+Agenda.
+
+Calendário.
+
+Lembretes.
+
+Notificações.
+
+Prioridade.
+
+Responsável.
+
+Checklist.
+
+Recorrência.
+
+Conclusão.
+
+CALENDÁRIO
+
+Google Calendar.
+
+Outlook.
+
+Eventos.
+
+Reuniões.
+
+Visitas.
+
+Agendamentos.
+
+EMAIL
+
+SMTP.
+
+IMAP.
+
+Envio.
+
+Recebimento.
+
+Templates.
+
+Assinatura.
+
+Sequências.
+
+Campanhas.
+
+CAMPANHAS
+
+WhatsApp.
+
+Email.
+
+SMS.
+
+Segmentação.
+
+Tags.
+
+Automações.
+
+Agendamento.
+
+Relatórios.
+
+AUTOMAÇÕES
+
+Construtor visual.
+
+Se:
+
+Entrou no funil.
+
+Mudou etapa.
+
+Recebeu mensagem.
+
+Nova venda.
+
+Pagamento aprovado.
+
+Lead criado.
+
+Então:
+
+Enviar WhatsApp.
+
+Enviar Email.
+
+Criar tarefa.
+
+Mover Kanban.
+
+Adicionar Tag.
+
+Criar oportunidade.
+
+Notificar vendedor.
+
+Webhook.
+
+API.
+
+Delay.
+
+Condições.
+
+ETIQUETAS
+
+Tags coloridas.
+
+Automáticas.
+
+Manuais.
+
+FINANCEIRO
+
+Receitas.
+
+Despesas.
+
+Fluxo caixa.
+
+Comissões.
+
+Metas.
+
+Faturas.
+
+Assinaturas.
+
+Relatórios.
+
+PRODUTOS
+
+Cadastro.
+
+Categorias.
+
+Preço.
+
+Estoque.
+
+Fotos.
+
+SKU.
+
+Código barras.
+
+QR Code.
+
+CATÁLOGO
+
+Compartilhar catálogo.
+
+WhatsApp.
+
+Link público.
+
+QR Code.
+
+DOCUMENTOS
+
+Upload.
+
+PDF.
+
+Imagem.
+
+Vídeo.
+
+Contrato.
+
+Assinatura digital.
+
+CONTRATOS
+
+Modelos.
+
+Assinatura.
+
+Status.
+
+Histórico.
+
+RELATÓRIOS
+
+Vendas.
+
+Conversões.
+
+Leads.
+
+Campanhas.
+
+WhatsApp.
+
+Equipe.
+
+Funil.
+
+Financeiro.
+
+Atendimento.
+
+Tempo resposta.
+
+IA.
+
+Exportação PDF.
+
+Excel.
+
+CSV.
+
+DASHBOARD PERSONALIZADO
+
+Widgets.
+
+Arrastar.
+
+Redimensionar.
+
+Salvar layout.
+
+NOTIFICAÇÕES
+
+Push.
+
+Email.
+
+WhatsApp.
+
+Sistema.
+
+Desktop.
+
+API
+
+API REST completa.
+
+Autenticação JWT.
+
+Documentação Swagger/OpenAPI.
+
+Webhooks.
+
+SDK.
+
+Tokens.
+
+Rate Limit.
+
+Logs.
+
+INTEGRAÇÕES
+
+WhatsApp Business API.
+
+Evolution API.
+
+Cloud API.
+
+OpenAI.
+
+Google Calendar.
+
+Google Drive.
+
+Google Ads.
+
+Meta Ads.
+
+Facebook.
+
+Instagram.
+
+Messenger.
+
+Telegram.
+
+Mercado Pago.
+
+Stripe.
+
+Asaas.
+
+Pagar.me.
+
+Hotmart.
+
+RD Station.
+
+Zapier.
+
+Make.
+
+N8N.
+
+Webhook.
+
+SMTP.
+
+IMAP.
+
+Slack.
+
+Discord.
+
+Microsoft Teams.
+
+ERP.
+
+Tiny ERP.
+
+Bling.
+
+Omie.
+
+Conta Azul.
+
+WooCommerce.
+
+Shopify.
+
+Tray.
+
+Nuvemshop.
+
+Magento.
+
+VTEX.
+
+WordPress.
+
+AUDITORIA
+
+Logs completos.
+
+Quem alterou.
+
+Quando alterou.
+
+IP.
+
+Dispositivo.
+
+Histórico.
+
+SEGURANÇA
+
+JWT.
+
+Refresh Token.
+
+Criptografia.
+
+LGPD.
+
+Rate Limit.
+
+Firewall lógico.
+
+Permissões.
+
+2FA.
+
+Backup automático.
+
+Versionamento.
+
+Sessões.
+
+CONFIGURAÇÕES
+
+Empresa.
+
+Usuários.
+
+Permissões.
+
+Plano.
+
+Faturamento.
+
+SMTP.
+
+WhatsApp.
+
+API.
+
+Webhooks.
+
+Campos personalizados.
+
+Idiomas.
+
+Tema.
+
+Logo.
+
+Domínio.
+
+SAAS
+
+Multiempresa.
+
+Planos.
+
+Assinaturas.
+
+Trial.
+
+Cobrança automática.
+
+Limites por plano.
+
+Número usuários.
+
+Número instâncias WhatsApp.
+
+Número Leads.
+
+Número Funis.
+
+Número Automações.
+
+Número APIs.
+
+Número campanhas.
+
+Área administrativa global para gerenciamento de clientes, planos, cobranças, métricas e suporte.
+
+PAINEL ADMINISTRADOR
+
+Visualizar todas empresas.
+
+Bloquear.
+
+Excluir.
+
+Alterar plano.
+
+Relatórios globais.
+
+Receita mensal (MRR).
+
+Receita anual (ARR).
+
+Churn.
+
+Clientes ativos.
+
+Clientes cancelados.
+
+Logs.
+
+Monitoramento.
+
+Uso recursos.
+
+BANCO DE DADOS
+
+Modelagem relacional normalizada.
+
+Tabelas separadas para:
+
+Empresas
+
+Usuários
+
+Permissões
+
+Clientes
+
+Contatos
+
+Leads
+
+Conversas
+
+Mensagens
+
+Instâncias WhatsApp
+
+Funis
+
+Etapas
+
+Oportunidades
+
+Tarefas
+
+Agenda
+
+Produtos
+
+Pedidos
+
+Pagamentos
+
+Campanhas
+
+Automações
+
+Tags
+
+Logs
+
+Arquivos
+
+Notificações
+
+Webhooks
+
+API Keys
+
+Configurações
+
+Auditoria
+
+PERFORMANCE
+
+Paginação.
+
+Lazy Loading.
+
+Cache.
+
+Busca rápida.
+
+Filtros avançados.
+
+Ordenação.
+
+Upload otimizado.
+
+Compressão de imagens.
+
+Tempo de carregamento inferior a 2 segundos.
+
+TECNOLOGIAS
+
+Frontend:
+
+React
+
+Next.js
+
+TypeScript
+
+Tailwind CSS
+
+Shadcn UI
+
+React Query
+
+React Hook Form
+
+Zod
+
+Framer Motion
+
+Backend:
+
+Node.js
+
+NestJS
+
+Prisma ORM
+
+PostgreSQL
+
+Redis
+
+BullMQ para filas
+
+WebSocket (Socket.IO)
+
+Infraestrutura:
+
+Docker
+
+Docker Compose
+
+Nginx
+
+CI/CD
+
+GitHub Actions
+
+Deploy em VPS, Railway, Render ou AWS
+
+DIFERENCIAIS
+
+Implementar um CRM extremamente profissional com UX moderna, alta performance e arquitetura modular, incluindo:
+
+Caixa de entrada omnichannel (WhatsApp, Instagram Direct, Facebook Messenger, Telegram e e-mail) em uma única tela.
+
+Múltiplas instâncias de WhatsApp com balanceamento e reconexão automática.
+
+Kanban ilimitado com automações por etapa.
+
+Construtor visual de automações (drag-and-drop).
+
+Construtor de chatbot com IA e fluxos condicionais.
+
+Campos personalizados para qualquer entidade.
+
+Dashboards e relatórios totalmente personalizáveis.
+
+Sistema completo de permissões (RBAC).
+
+API pública completa com documentação OpenAPI.
+
+Marketplace de integrações.
+
+Central de notificações.
+
+Base de conhecimento (FAQ) interna.
+
+Help Desk com SLA.
+
+Gestão de equipes, metas e comissões.
+
+Registro de auditoria em todas as ações.
+
+Backup automático e recuperação.
+
+Suporte a múltiplos idiomas e múltiplas moedas.
+
+Sistema de templates para WhatsApp e e-mail.
+
+Pesquisa global instantânea.
+
+Exportação e importação de dados.
+
+Escalabilidade para milhares de empresas utilizando o mesmo sistema.
+
+O resultado deve ser um CRM SaaS de nível enterprise, preparado para produção, seguro, modular, escalável, documentado e com código limpo, seguindo as melhores práticas de arquitetura de software e experiência do usuário.
+
+This project was built with [Lovable](https://lovable.dev).
+
+**Live app**: https://salesignite-ops.lovable.app
+
+## Build with Lovable
+
+Continue developing this project in the [Lovable editor](https://lovable.dev/projects/d8439ef6-74cd-41da-b21e-8123a7557c1c).
+
+- **Ship faster**: describe what you want to build and Lovable handles the code.
+- **Stay in sync**: every change made in Lovable is committed straight to this repository.
+- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+
+## Development
+
+Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+
+```sh
+git clone <this-repository-url>
+cd <repository-name>
+npm i
+npm run dev
 ```
-
-As chaves reais de Supabase, OpenAI, Evolution, Meta, Google e n8n devem ficar exclusivamente nas variaveis de ambiente do EasyPanel. Nunca versione o arquivo `.env` real.
-
-## Testes de producao
-
-A API correta deve retornar JSON:
-
-```text
-https://crm.r2rmarketingdigital.com.br/api/health
-https://crm.r2rmarketingdigital.com.br/api/config
-```
-
-Para testar certificado SSL e resposta da API pelo terminal:
-
-```bash
-npm run check:production
-```
-
-O comando falha quando o certificado nao e confiavel, quando `/api/health` retorna HTML ou quando o backend nao responde com `ok: true`.
-
-## SSL e dominio
-
-O DNS do dominio `crm.r2rmarketingdigital.com.br` deve apontar para o servico Node do EasyPanel, com proxy para a porta `3000`, protocolo interno HTTP e Let's Encrypt ativado. A rota `https://crm.r2rmarketingdigital.com.br/api/health` precisa retornar JSON. Se retornar HTML, o dominio ainda esta servindo uma hospedagem estatica antiga em vez do backend.
-
-Nao use `api.r2rmarketingdigital.com.br` como URL do backend enquanto ele nao apontar para o mesmo servico Node. Se o subdominio separado for reativado, ele tambem deve responder `/api/health` com JSON antes de ser salvo no CRM.
-
-O backend da raiz serve o frontend correto de `frontend-public_html/`, injeta as configuracoes publicas no navegador e mantem as rotas `/health`, `/api/health`, `/api/auth/*`, `/api/leads`, `/api/clientes`, `/api/tarefas`, `/api/mensagens`, `/api/reports/dashboard`, `/api/meta/*` e `/api/integrations/evolution/*`.
